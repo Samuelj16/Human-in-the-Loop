@@ -9,6 +9,11 @@ from app.llm.base import LLMError, LLMProvider
 
 @lru_cache
 def get_llm_provider(name: str | None = None) -> LLMProvider:
+    """Build the configured provider.
+
+    The single place that decides which SDK the agent talks to. Cached, because
+    adapters are stateless apart from their client and capability probes.
+    """
     provider = (name or settings.llm_provider).lower()
     if provider == "anthropic":
         from app.llm.anthropic_provider import AnthropicProvider

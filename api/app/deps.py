@@ -22,6 +22,12 @@ async def get_current_user(
         HTTPAuthorizationCredentials | None, Depends(bearer_scheme)
     ] = None,
 ) -> User:
+    """Resolve the bearer token to a user, or reject the request.
+
+    The token is issued by this API and forwarded by the Next.js proxy; the
+    browser never holds it. Swapping in Clerk later means replacing this one
+    function.
+    """
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

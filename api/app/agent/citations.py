@@ -57,6 +57,7 @@ def extract_urls(markdown: str) -> list[str]:
 
 @dataclass
 class CitationAudit:
+    """How a report's citations fared against the retrieval ledger."""
     cited: list[str] = field(default_factory=list)
     verified: list[str] = field(default_factory=list)
     unverified: list[str] = field(default_factory=list)
@@ -64,13 +65,16 @@ class CitationAudit:
 
     @property
     def verified_ratio(self) -> float:
+        """Fraction of cited URLs that were genuinely retrieved."""
         return round(len(self.verified) / len(self.cited), 3) if self.cited else 1.0
 
     @property
     def is_clean(self) -> bool:
+        """True when the report cites nothing the agent did not actually fetch."""
         return not self.unverified
 
     def as_dict(self) -> dict:
+        """JSON-serialisable form, stored on the task and rendered by the UI."""
         return {
             "cited_count": len(self.cited),
             "verified_count": len(self.verified),

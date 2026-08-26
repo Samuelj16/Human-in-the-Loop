@@ -9,9 +9,14 @@ from app.search.base import SearchClient, SearchResult
 
 
 class StubSearch(SearchClient):
+    """Offline stand-in for Tavily.
+
+    Results are labelled [STUB RESULT] so nobody mistakes them for real sources.
+    """
     name = "stub"
 
     async def search(self, query: str, *, max_results: int = 5) -> list[SearchResult]:
+        """Return deterministic placeholder hits for `query`."""
         return [
             SearchResult(
                 url=f"https://example.com/stub/{i}?q={query.replace(' ', '+')}",

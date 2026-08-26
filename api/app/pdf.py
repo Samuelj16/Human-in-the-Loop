@@ -42,6 +42,7 @@ def _weasyprint():
 
 
 def markdown_to_html(md_text: str) -> str:
+    """Render report Markdown to HTML for the PDF pass."""
     import markdown  # noqa: PLC0415
 
     return markdown.markdown(
@@ -50,6 +51,11 @@ def markdown_to_html(md_text: str) -> str:
 
 
 def render_report_pdf(query: str, report_markdown: str) -> bytes:
+    """Render a finished report to PDF bytes.
+
+    Raises PDFUnavailable rather than crashing the process when the system
+    libraries are missing, so PDF export degrades to a 503.
+    """
     weasyprint = _weasyprint()
     html = f"""<!doctype html><html><head><meta charset="utf-8">
 <style>{STYLESHEET}</style></head><body>

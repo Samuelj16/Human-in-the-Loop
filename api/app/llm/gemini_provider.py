@@ -26,6 +26,12 @@ from app.llm.retry import with_retry
 
 
 class GeminiProvider(LLMProvider):
+    """Gemini, via Google's OpenAI-compatible endpoint.
+
+    Note the wire-format methods below duplicate OpenAIProvider almost exactly,
+    since both speak /v1/chat/completions. They are worth collapsing into the
+    shared base class next time this file is touched.
+    """
     name = "gemini"
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
@@ -106,6 +112,7 @@ class GeminiProvider(LLMProvider):
         max_tokens: int = 8000,
         cache_prefix: bool = False,
     ) -> LLMResponse:
+        """One research turn, with tools."""
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": self._to_wire(system, messages),
@@ -149,6 +156,7 @@ class GeminiProvider(LLMProvider):
         schema: dict[str, Any],
         max_tokens: int = 2000,
     ) -> tuple[dict[str, Any], LLMResponse]:
+        """One turn constrained to a JSON schema."""
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": self._to_wire(system, messages),

@@ -50,7 +50,11 @@ export default function Home() {
   const fetchActiveTask = useCallback(async (id: string) => {
     try {
       const detail = await api.tasks.get(id);
-      setActiveTask(detail);
+      setActiveTask({
+        ...detail,
+        events: detail.events || [],
+        sources: detail.sources || [],
+      });
     } catch (err) {
       console.error("Failed to fetch task:", err);
     }
@@ -96,14 +100,17 @@ export default function Home() {
 
         setActiveTask((current) => {
           if (!current || current.id !== page.task_id) return current;
+          const currentEvents = current.events || [];
+          const newEvents = page.events || [];
           return {
             ...current,
             status: page.status,
             searches_used: page.searches_used,
             actual_cost_usd: page.actual_cost_usd,
-            events: page.events.length
-              ? [...current.events, ...page.events]
-              : current.events,
+            events: newEvents.length
+              ? [...currentEvents, ...newEvents]
+              : currentEvents,
+            sources: current.sources || [],
           };
         });
 
@@ -142,7 +149,11 @@ export default function Home() {
     try {
       const created = await api.tasks.create(query);
       setActiveTaskId(created.id);
-      setActiveTask(created);
+      setActiveTask({
+        ...created,
+        events: [],
+        sources: [],
+      });
       await loadTasks();
     } catch (err: unknown) {
       alert(errorMessage(err, "Failed to create task"));
@@ -160,7 +171,11 @@ export default function Home() {
     setApprovingPlan(true);
     try {
       const updated = await api.tasks.approve(activeTaskId, plan, answers);
-      setActiveTask(updated);
+      setActiveTask((current) => ({
+        ...updated,
+        events: current?.events || [],
+        sources: current?.sources || [],
+      }));
       await loadTasks();
     } catch (err: unknown) {
       alert(errorMessage(err, "Failed to approve plan"));
@@ -175,7 +190,11 @@ export default function Home() {
     setCancellingTask(true);
     try {
       const cancelled = await api.tasks.cancel(activeTaskId);
-      setActiveTask(cancelled);
+      setActiveTask((current) => ({
+        ...cancelled,
+        events: current?.events || [],
+        sources: current?.sources || [],
+      }));
       await loadTasks();
     } catch (err: unknown) {
       alert(errorMessage(err, "Failed to cancel task"));
@@ -200,7 +219,11 @@ export default function Home() {
     if (!activeTaskId) return;
     try {
       const shared = await api.tasks.toggleShare(activeTaskId);
-      setActiveTask(shared);
+      setActiveTask((current) => ({
+        ...shared,
+        events: current?.events || [],
+        sources: current?.sources || [],
+      }));
     } catch (err: unknown) {
       alert(errorMessage(err, "Failed to toggle share"));
     }

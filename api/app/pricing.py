@@ -58,6 +58,11 @@ def _configured_open_model_price(model: str) -> tuple[float, float] | None:
 
 
 def price_for(model: str) -> tuple[float, float]:
+    """Input and output price per 1M tokens for a model.
+
+    Falls back to a configurable guess for models we have no published price for;
+    callers should check `is_priced` before presenting a figure as fact.
+    """
     if model in PRICES:
         return PRICES[model]
     configured = _configured_open_model_price(model)
@@ -104,6 +109,7 @@ PLANNER_OUTPUT_TOKENS = 400
 
 @dataclass(frozen=True)
 class CostEstimate:
+    """A priced plan: expected cost with a plausible range around it."""
     model: str
     expected_usd: float
     low_usd: float
@@ -113,6 +119,7 @@ class CostEstimate:
     priced: bool
 
     def as_dict(self) -> dict:
+        """JSON-serialisable form for the approval gate."""
         return {
             "model": self.model,
             "expected_usd": self.expected_usd,

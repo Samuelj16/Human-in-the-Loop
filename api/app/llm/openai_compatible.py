@@ -112,6 +112,7 @@ class OpenAICompatibleProvider(OpenAIProvider):
 
     @property
     def is_local(self) -> bool:
+        """True when the model runs on this machine, and so costs nothing per token."""
         return self.preset in LOCAL_PRESETS or "localhost" in self.base_url or (
             "127.0.0.1" in self.base_url
         )
@@ -149,6 +150,7 @@ class OpenAICompatibleProvider(OpenAIProvider):
         max_tokens: int = 8000,
         cache_prefix: bool = False,
     ) -> LLMResponse:
+        """One turn, using whichever token-limit parameter this server accepts."""
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": self._to_wire(system, messages),
@@ -175,6 +177,12 @@ class OpenAICompatibleProvider(OpenAIProvider):
         schema: dict[str, Any],
         max_tokens: int = 2000,
     ) -> tuple[dict[str, Any], LLMResponse]:
+        """Structured output, degrading to whatever this server supports.
+
+        Tries a strict JSON schema, then `json_object` with the schema in the prompt,
+        then plain prompting with best-effort parsing. Each rejection latches, so an
+        unsupported mode costs one wasted request per process, not one per call.
+        """
         attempts_log: list[str] = []
 
         for mode in ("json_schema", "json_object", "prompt"):

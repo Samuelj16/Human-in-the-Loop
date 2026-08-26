@@ -42,6 +42,12 @@ CACHE_CONTROL = {"type": "ephemeral"}
 
 
 class AnthropicProvider(LLMProvider):
+    """Claude, via the official `anthropic` SDK.
+
+    The fiddly parts are documented at the module level: adaptive thinking, no
+    sampling parameters, refusal as a 200 response, and echoing thinking blocks
+    back across tool turns.
+    """
     name = "anthropic"
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
@@ -65,6 +71,10 @@ class AnthropicProvider(LLMProvider):
         pending_results: list[dict[str, Any]] = []
 
         def flush_results() -> None:
+            """Emit buffered tool results as one user message.
+
+            Splitting them across messages trains the model out of parallel tool calls.
+            """
             if pending_results:
                 wire.append({"role": "user", "content": list(pending_results)})
                 pending_results.clear()
@@ -153,6 +163,7 @@ class AnthropicProvider(LLMProvider):
         max_tokens: int = 8000,
         cache_prefix: bool = False,
     ) -> LLMResponse:
+        """One research turn, with tools and a cacheable prefix."""
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": max_tokens,

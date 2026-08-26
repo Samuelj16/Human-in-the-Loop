@@ -31,6 +31,10 @@ class LLMTransientError(LLMError):
 
 @dataclass(frozen=True)
 class ToolSpec:
+    """A tool offered to the model: name, description, and JSON Schema.
+
+    Provider-neutral; each adapter translates this into its own wire format.
+    """
     name: str
     description: str
     input_schema: dict[str, Any]
@@ -38,6 +42,10 @@ class ToolSpec:
 
 @dataclass(frozen=True)
 class ToolCall:
+    """One tool invocation the model asked for.
+
+    `id` must be echoed back on the matching result, or the conversation breaks.
+    """
     id: str
     name: str
     arguments: dict[str, Any]
@@ -45,6 +53,11 @@ class ToolCall:
 
 @dataclass(frozen=True)
 class Usage:
+    """Token accounting for a single call.
+
+    Cached input is tracked separately because it bills at a fraction of fresh
+    input - folding them together would make cost reporting silently wrong.
+    """
     input_tokens: int = 0
     output_tokens: int = 0
     # Split out because cached input is billed at a tenth of fresh input;
@@ -62,11 +75,18 @@ class Usage:
 
     @property
     def billable_input(self) -> int:
+        """Every input token that costs money, cached or not."""
         return self.input_tokens + self.cache_read_tokens + self.cache_write_tokens
 
 
 @dataclass
 class Message:
+    """One turn in a provider-neutral conversation.
+
+    `provider_raw` carries anything that does not fit this shape (Anthropic
+    thinking blocks, for instance) and is only ever read back by the adapter
+    that produced it.
+    """
     role: Literal["user", "assistant", "tool"]
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
@@ -80,6 +100,7 @@ class Message:
 
 @dataclass
 class LLMResponse:
+    """One model reply, plus the telemetry we persist per turn."""
     text: str
     tool_calls: list[ToolCall]
     stop_reason: str
@@ -91,6 +112,7 @@ class LLMResponse:
     model: str = ""
 
     def as_message(self) -> Message:
+        """Convert this reply into a history entry for the next turn."""
         return Message(
             role="assistant",
             content=self.text,
@@ -100,16 +122,23 @@ class LLMResponse:
 
 
 def user_message(text: str) -> Message:
+    """Build a user turn."""
     return Message(role="user", content=text)
 
 
 def assistant_message(text: str) -> Message:
+    """Build an assistant turn with no tool calls."""
     return Message(role="assistant", content=text)
 
 
 def tool_result_message(
     call: ToolCall, content: str, *, is_error: bool = False
 ) -> Message:
+    """Build the result turn for a tool call.
+
+    `is_error` tells the model the tool failed, which lets it recover instead of
+    treating the error text as data.
+    """
     return Message(
         role="tool",
         content=content,

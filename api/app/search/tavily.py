@@ -10,10 +10,16 @@ ENDPOINT = "https://api.tavily.com/search"
 
 
 class SearchError(RuntimeError):
+    """Tavily rejected the request or is unreachable."""
     pass
 
 
 class TavilySearch(SearchClient):
+    """Tavily client.
+
+    Tries bearer auth first and falls back to the older body-field key, so a key
+    of either vintage works without configuration.
+    """
     name = "tavily"
 
     def __init__(self, api_key: str | None = None) -> None:
@@ -22,6 +28,7 @@ class TavilySearch(SearchClient):
             raise SearchError("TAVILY_API_KEY is not set")
 
     async def search(self, query: str, *, max_results: int = 5) -> list[SearchResult]:
+        """Run one search and return the hits, raising SearchError on failure."""
         payload = {
             "query": query,
             "max_results": max_results,

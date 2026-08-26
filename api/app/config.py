@@ -7,6 +7,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Everything configurable, resolved from the environment and .env files.
+
+    Environment variables win over .env, and later files in `env_file` win over
+    earlier ones - worth remembering when a root .env and api/.env disagree.
+    """
     model_config = SettingsConfigDict(
         env_file=(".env", "api/.env", "../.env"),
         extra="ignore",
@@ -91,6 +96,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_security_settings(self) -> "Settings":
+        """Refuse to start with unsafe defaults in production."""
         placeholders = ("change-me", "dev-secret", "placeholder")
         normalized = self.jwt_secret.casefold()
         if (
@@ -107,11 +113,13 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
+        """CORS origins, parsed from the comma-separated setting."""
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
 @lru_cache
 def get_settings() -> Settings:
+    """Cached settings singleton."""
     return Settings()
 
 

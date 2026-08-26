@@ -22,6 +22,12 @@ _background: set[asyncio.Task] = set()
 
 
 async def enqueue(job_name: str, task_id: str) -> None:
+    """Dispatch a job.
+
+    With REDIS_URL set this goes to an arq worker, so a long run survives an API
+    redeploy. Without it the coroutine runs in this process - fine on a laptop,
+    but a restart orphans the task for the reaper to clean up.
+    """
     if job_name not in JOBS:
         raise ValueError(f"Unknown job {job_name!r}")
 

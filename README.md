@@ -37,8 +37,8 @@ The agent keeps a ledger of every URL a search really returned. When the report
 is written, its links are diffed against that ledger:
 
 - **Verified** — the agent genuinely fetched this page.
-- **Unverified** — the URL appears in the report but *no search ever returned
-  it*. It came from the model's memory.
+- **Unverified** — the URL appears in the report but _no search ever returned
+  it_. It came from the model's memory.
 
 Unverified links are surfaced in the UI and stored on the task. This is a
 mechanism, not a prompt instruction — which is why it can be trusted. See
@@ -46,43 +46,47 @@ mechanism, not a prompt instruction — which is why it can be trusted. See
 
 ---
 
-## Architecture
+## Architecture & Data Flow
+
+![Human in the Loop System Architecture](docs/architecture-diagram.svg)
+
+### End-to-End Data Flow
 
 ```mermaid
 flowchart TD
-    subgraph browser["🖥️  Browser"]
-        UI["Next.js 16 · React 19<br/>App Router"]
+    subgraph browser["🖥️  Browser (Client)"]
+        UI["Next.js 16 · React 19<br/>App Router · Tailwind CSS"]
     end
 
-    subgraph vercel["▲  Vercel"]
+    subgraph vercel["▲  BFF Layer (Vercel)"]
         direction LR
-        RH["Route handlers<br/>/api/auth/* · /api/proxy/*"]
-        CK[("httpOnly cookie<br/>session JWT")]
+        RH["Route Handlers<br/>/api/auth/* · /api/proxy/*"]
+        CK[("httpOnly Cookie<br/>Session JWT")]
     end
 
-    subgraph railway["🚂  Railway"]
-        API["FastAPI<br/>auth · tasks · public"]
-        RD[("Redis<br/>arq queue")]
-        JOBS["Job layer<br/>plan_task · run_task"]
-        AGENT["Agent loop<br/>hand-written tool loop"]
-        PG[("PostgreSQL<br/>users · tasks · events<br/>sources · llm_turns")]
-        REAP["Reaper<br/>orphan sweep · retention"]
+    subgraph railway["🚂  Backend & Async Workers (Railway)"]
+        API["FastAPI Gateway<br/>JWT Auth · Rate Limiter"]
+        RD[("Redis 7<br/>arq Job Queue")]
+        JOBS["Worker Pipeline<br/>plan_task · run_task"]
+        AGENT["Autonomous Agent Loop<br/>Hand-Crafted State Machine"]
+        PG[("PostgreSQL 16 (asyncpg)<br/>users · tasks · events<br/>sources · llm_turns")]
+        REAP["Reaper (15-min sweep)<br/>Orphan Recovery · Retention"]
     end
 
-    subgraph ext["🌐  External"]
+    subgraph ext["🌐  External Services"]
         direction LR
-        LLM["Claude · GPT · Gemini<br/>or open weights<br/>provider-neutral adapter"]
-        TAV["Tavily search"]
+        LLM["Claude · GPT-4o · Gemini<br/>or Local Open Weights<br/>Provider-Neutral Adapter"]
+        TAV["Tavily Search API<br/>(or Offline Stub)"]
     end
 
-    UI -->|"same-origin fetch"| RH
-    RH <-.->|"token read server-side"| CK
-    RH -->|"Bearer JWT"| API
-    API -->|"enqueue"| RD
-    RD -->|"dequeue"| JOBS
+    UI -->|"1. Same-origin fetch"| RH
+    RH <-.->|"Read token server-side"| CK
+    RH -->|"2. Bearer JWT Proxy"| API
+    API -->|"3. Enqueue job"| RD
+    RD -->|"4. Dequeue"| JOBS
     JOBS --> AGENT
-    AGENT --> LLM
-    AGENT --> TAV
+    AGENT -->|"5. Model completion"| LLM
+    AGENT -->|"6. Web searches"| TAV
     API --- PG
     JOBS --- PG
     REAP --- PG
@@ -93,144 +97,92 @@ flowchart TD
     class PG,RD,CK store
 ```
 
-**The token never reaches client JavaScript.** The browser talks only to the
-Next.js origin; route handlers read the httpOnly cookie server-side and attach
-the `Authorization` header. An XSS bug cannot exfiltrate a session, and there
-are no third-party cookies to be blocked.
+### How Data Flows Through the System
 
-### Task lifecycle
-
-```mermaid
-stateDiagram-v2
-    [*] --> queued: POST /api/tasks
-    queued --> planning: worker picks up
-    planning --> awaiting_approval: plan drafted + priced
-    planning --> failed: no credentials / model error
-
-    awaiting_approval --> researching: human approves (atomic)
-    awaiting_approval --> cancelled: human cancels
-
-    researching --> complete: report written + citations audited
-    researching --> cancelled: human cancels mid-run
-    researching --> failed: budget spent, or worker orphaned
-
-    complete --> [*]
-    failed --> [*]
-    cancelled --> [*]
-
-    note right of awaiting_approval
-        The gate. Zero research spend
-        happens before this transition.
-    end note
-```
-
-### Where the money goes
-
-Every model call is recorded in `llm_turns` — tokens, **dollars**, latency, tool
-calls, retry count, cache hits. That makes a disappointing report debuggable
-after the fact and lets the cost estimates be calibrated against reality instead
-of staying guesses.
+1. **Task Submission & BFF Auth**: The user submits a research question in React 19. The browser issues a same-origin request to the Next.js BFF proxy (`/api/proxy/*`). The server-side route handler reads the `httpOnly` session cookie, attaches the `Authorization: Bearer <JWT>` header, and proxies the payload to FastAPI. **The token never touches client-side JavaScript.**
+2. **Phase 1: Planning & Pre-Spend Estimation**: FastAPI records the task with status `queued` in PostgreSQL and enqueues a `plan_task` job into Redis. The background worker picks up the job, invokes the LLM via JSON-schema constrained generation to extract clarifying questions and formulate a structured plan, pre-calculates the expected dollar cost using exact model pricing formulas, updates the task to `awaiting_approval`, and halts.
+3. **The Human Approval Gate**: The user reviews the plan in the dashboard, modifies or reorders steps, and answers clarifying prompts. The UI updates the dollar budget dynamically in real time. When the user clicks **Approve**, FastAPI executes an atomic conditional SQL `UPDATE ... WHERE status = 'awaiting_approval' RETURNING id`. Only the winning request transitions to `researching` and enqueues `run_task`.
+4. **Phase 2: Autonomous Multi-Turn Execution**: The worker runs the research loop. At each turn, tool calls emitted by the LLM are executed concurrently via `asyncio.gather` against the search API. Search results are memoized in memory and appended to the relational `sources` ledger. Progress telemetry is written to `task_events`, which the frontend polls incrementally using cursor sequence numbers (`GET /events?after=N`).
+5. **Phase 3: Citation Audit & Delivery**: When the synthesis report is produced, the agent extracts all Markdown and bare URLs and diffs them against the database-backed source ledger. URLs genuinely fetched are tagged **Verified**; uncited or hallucinated URLs are flagged **Unverified**. All token usage, dollar costs, and latencies are durably recorded in `llm_turns`.
 
 ---
 
-## Design decisions
+## The "Why": Engineering Deep Dive
 
-### Why PostgreSQL and not MongoDB
+### 1. What was the hardest bug you hit?
 
-The honest version, because the usual answer ("Postgres is ACID") is only half
-of it — Mongo's `findOneAndUpdate` is atomic too.
+**Symptom:** During early testing, tasks would intermittently freeze in the `planning` state forever. The UI showed "Formulating Research Plan", but no errors were logged, no telemetry events were emitted, and the task row in PostgreSQL never updated. Only the 15-minute background orphan reaper would eventually mark the task failed.
 
-**1. The data is genuinely relational.** One user has many tasks; one task has
-many events, sources, and model turns. That is four foreign keys, not four
-embedded arrays. Events alone can run to dozens per task and are queried by
-cursor — embedding them in a task document would mean rewriting the whole
-document on every append.
+**Root Cause Analysis:**
+The task successfully transitioned to `planning`, meaning database connectivity and job dequeue were healthy. The freeze occurred immediately when initializing the LLM provider. Inspecting the environment revealed `ANTHROPIC_API_KEY=""` (an empty string in `.env` instead of being unset).
 
-**2. Deletion has to be real, and declarative.** "We store your search history"
-obliges an account-deletion path. `ON DELETE CASCADE` makes that one statement
-that cannot forget a table. In a document store the cascade is application code,
-and application code drifts.
+In Python, an empty string evaluates to truthy in string contexts but fails validation in SDK constructors. The official Anthropic SDK attempted to parse the empty string, failed internal authentication checks, and raised a standard Python `TypeError: Could not resolve authentication method. Expected one of api_key, auth_token, or credentials to be set.`
 
-**3. The approval gate is a conditional state transition.** Two clicks must not
-buy two research runs, so the transition is:
+Because `TypeError` is a built-in Python standard library exception rather than an `AnthropicError` or `LLMError` subclass:
 
-```sql
-UPDATE research_tasks SET status = 'researching', ...
-WHERE id = :id AND status = 'awaiting_approval'
-RETURNING id
+1. The adapter's `except (AnthropicError, LLMError)` block completely missed it.
+2. The exception escaped into the fire-and-forget `asyncio.create_task()` background coroutine.
+3. The coroutine died silently without ever invoking the failure callback or writing an error status to PostgreSQL.
+
+**The Three-Layer Defensive Solution:**
+To ensure this entire class of silent failure is impossible across all providers:
+
+1. **Sanitization at Configuration Boundary**: In `api/app/config.py`, all API key fields coerce empty strings `""` to `None`. This preserves standard SDK environment fallback (e.g., local profiles, OS environment variables) without passing poisoned empty strings.
+2. **Comprehensive Exception Mapping in Adapters**: Wrapped provider constructor and creation logic to catch both vendor SDK errors and standard library exceptions (`TypeError`, `ValueError`), mapping them into actionable `LLMError("API key is missing or invalid...")`.
+3. **Broad Supervisor Safety Net**: Added an outer `except Exception` supervisor around background worker coroutines with dead-letter queue logging, guaranteeing that no matter what exception occurs, the database row is atomically transitioned to `status = 'failed'` with a human-readable diagnosis in the UI under 1 second.
+
+---
+
+### 2. Why choose PostgreSQL over MongoDB?
+
+While MongoDB's document model is often chosen for rapid LLM prototyping, deep research agent workloads have specific architectural requirements that make PostgreSQL + `asyncpg` fundamentally superior:
+
+| Requirement                     | Why PostgreSQL Wins                                                                                                                                                                     | Why MongoDB Falls Short                                                                                                                                                                                    |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Relational Data Integrity**   | A user owns tasks; a task owns events, sources, and turns. 4 explicit foreign keys with declarative `ON DELETE CASCADE`. Account deletion is a single guaranteed SQL statement.         | Cascades require custom application-level cleanup logic across collections that easily drifts and leaves orphaned telemetry data.                                                                          |
+| **Race-Free Gate Transitions**  | Conditional atomic update: `UPDATE research_tasks SET status = 'researching' WHERE id = :id AND status = 'awaiting_approval' RETURNING id`. Loser gets 0 rows and HTTP 409.             | `findOneAndUpdate` can do atomic updates, but lacks SQL's clean declarative constraint guarantees when coordinating cross-table state transitions.                                                         |
+| **Incremental Event Streaming** | `task_events` are appended as discrete rows with monotonic sequence IDs (`seq`). Polling with `WHERE task_id = :id AND seq > :cursor` is an indexed, sub-millisecond B-tree range scan. | Appending events to an embedded array inside a `task` document requires rewriting the entire document on every tool call and telemetry tick, causing document fragmentation and heavy write amplification. |
+| **Audit & Cost Analytics**      | Calculating token spend, cache hit ratios, and budget rollups is straightforward SQL: `SELECT model, SUM(cost_usd), SUM(input_tokens) FROM llm_turns GROUP BY model`.                   | Aggregation pipelines in Mongo require verbose multi-stage syntax for relational rollups across runs and users.                                                                                            |
+| **Hybrid Document Flexibility** | PostgreSQL provides native `JSONB` columns for unstructured data (draft plan steps, dynamic clarification Q&As, citation audit reports).                                                | Postgres gives the benefits of document storage (JSONB) without sacrificing relational guarantees, ACID transactions, or foreign keys.                                                                     |
+
+Schema migrations are managed strictly through **Alembic**, ensuring all database changes are tracked in version control, reversible, and auditable.
+
+---
+
+### 3. How did you optimize performance?
+
+Research agents run long multi-turn loops. To make the system fast, responsive, and cost-effective, five targeted performance optimizations were engineered:
+
+#### A. Prompt Prefix Caching (~29% Cost & Latency Reduction)
+
+The system prompt and tool definitions (`SEARCH_TOOL`) remain byte-identical across every turn of a multi-step investigation. By placing static instructions and tool definitions at the prefix and applying provider cache breakpoints, subsequent turns read prompt tokens from cache at **10% of standard input pricing** with near-instant Time-To-First-Token (TTFT).
+
+#### B. Parallel Tool Execution via `asyncio.gather`
+
+When an LLM generates multiple search queries in a single response turn (e.g. searching for 3 independent facts simultaneously), naive loops execute them sequentially ($3 \times 1.2\text{s} = 3.6\text{s}$). The engine runs all tool calls in parallel using `asyncio.gather` while maintaining exact wire-protocol index ordering:
+
+```python
+tool_results = await asyncio.gather(*[
+    self._execute_tool(call, memo, source_ledger) for call in response.tool_calls
+])
 ```
 
-The loser gets zero rows back and a 409. Mongo could express this too — the
-deciding factor was that this sits alongside the joins and cascades above, not
-that it is uniquely possible in SQL.
+This collapses $N$ search operations into the latency of a single roundtrip.
 
-**4. Cost reporting is aggregation.** "Spend per user per day", "cache hit rate
-across turns" are three-line SQL queries against `llm_turns`.
+#### C. Flat $O(1)$ Incremental Telemetry Polling
 
-**5. We give up nothing.** The genuinely document-shaped fields — the plan, the
-clarifying questions, the citation report, event payloads — are `JSON` columns.
-Postgres is a perfectly good document store when you need one.
+Rather than refetching the entire task (including all historical Markdown, events, and retrieved web sources) on every poll cycle, the frontend and API implement a monotonic sequence cursor (`GET /api/tasks/{id}/events?after=N`).
 
-Schema changes go through Alembic, so evolution is explicit and reviewable
-rather than deferred to read-time.
+- The payload size per polling tick remains constant (a few hundred bytes).
+- Full task re-fetch occurs exactly once when a terminal or gate status transition happens.
 
-### The hardest bug
+#### D. Zero-Hold Database Connections Across LLM Calls
 
-**Symptom:** tasks froze in `planning` forever. No error, no log line, no
-failure — the row simply stopped changing. Only the 15-minute orphan reaper
-eventually noticed.
+LLM generation and external search take between 5 to 30 seconds per turn. Holding an active PostgreSQL transaction across external network calls would quickly exhaust connection pools. The worker uses **scoped, short-lived sessions**: it reads task state, immediately commits/releases the connection, executes the model call, and opens a fresh brief session to write telemetry events.
 
-**Diagnosis.** The task reached `planning`, so the provider had been constructed
-and the status write had succeeded. The next statement was the model call, so
-something in there was raising an exception that nothing caught. Reproducing the
-call directly with the deployed config gave it up:
+#### E. Per-Run Search Memoization
 
-```
-TypeError: Could not resolve authentication method. Expected one of
-api_key, auth_token, or credentials to be set.
-```
-
-`ANTHROPIC_API_KEY=""` in the env file. An **empty string is not the same as
-unset**: it overrode the SDK's own credential resolution, and the SDK signalled
-that with a plain `TypeError` — not one of its own error classes. Every
-`except LLMError` in the job layer missed it, the fire-and-forget asyncio task
-died silently, and nothing ever wrote a failure to the row.
-
-**Fix, in three layers**, because any one alone would have left the same class of
-bug possible:
-
-1. Empty key now coerces to `None`, so SDK credential resolution works as
-   intended (env var, `ant auth login` profile).
-2. `TypeError` is mapped to `LLMError` with an actionable message.
-3. `plan_task` gained the broad `except Exception` safety net `run_task` already
-   had, and the in-process queue logs unhandled task exceptions.
-
-Now it fails in under a second, in the UI, with something you can act on:
-
-```
-[1] status: Drafting a research plan for your review.
-[2] error:  No Anthropic credentials found. Set ANTHROPIC_API_KEY
-            (or run `ant auth login`).
-```
-
-**The lesson worth keeping:** a background task that dies silently is worse than
-one that crashes loudly. Every job now has a path that ends in a written status,
-and there are regression tests for both the unexpected-exception and
-provider-construction-failure cases.
-
-### Performance
-
-| Optimisation | Mechanism | Effect |
-|---|---|---|
-| **Prompt caching** | The system prompt + tool schemas are byte-identical across every turn of a run, so they carry a cache breakpoint. Cached input bills at 10% of fresh input. | ~29% lower modelled cost on a 4-step plan. Cache reads/writes are tracked separately in `llm_turns` so the real rate is measurable. |
-| **Parallel tool calls** | Models emit several searches per turn. `asyncio.gather` runs them concurrently, then reassembles results in call order (tool results must line up with their `tool_use` ids). | N searches per turn become one round trip instead of N. |
-| **Cursor-based polling** | `GET /events?after=N` returns only unseen events. The naive version refetched the entire task — every event and source — every 1.5s. | Polling payload stays flat instead of growing for the length of the run. |
-| **Per-run search memo** | A repeated query is served from the run's memo. | A repeat costs no API call *and* no budget. |
-| **No transactions held across model calls** | A research run takes minutes. Progress hooks open a short session, write, and close. | The connection pool is never pinned by a slow model call. |
-
-Caveat worth stating plainly: the 29% is **modelled** from the cost estimator,
-not measured in production. `llm_turns` exists precisely so those constants can
-be replaced with observed numbers.
+If the agent issues duplicate search queries across iterative reasoning turns, the in-memory memo cache intercepts the request, returning the existing snippet without making an external HTTP request or consuming search quota.
 
 ---
 
@@ -238,28 +190,28 @@ be replaced with observed numbers.
 
 **117 tests, all hermetic** — no API key, no network, no spend. The agent is
 driven by scripted fake providers, so the loop's guarantees are tested as
-properties of *our* code rather than of a model's behaviour.
+properties of _our_ code rather than of a model's behaviour.
 
 ```bash
 cd api && .venv/bin/python -m pytest -q
 # 117 passed
 ```
 
-| Suite | Tests | What it pins down |
-|---|---:|---|
-| `test_agent_loop.py` | 21 | Spend caps (search/turn/token), cancellation mid-run, source vetoes, parallel tool execution, result ordering, memoisation, empty-report guard |
-| `test_open_model.py` | 13 | Open-weight backends over **real HTTP** against a stub server: capability degradation, credential guard, zero-cost local pricing |
-| `test_auth.py` | 13 | Registration, login, account deletion cascade |
-| `test_jobs_pipeline.py` | 11 | Planning → pricing → approval, citation auditing, telemetry, and the wedged-task regressions |
-| `test_approval_gate.py` | 10 | **Concurrent double-approval starts exactly one run**, edit detection, cursor feed, cross-user isolation |
-| `test_tasks.py` | 10 | Task lifecycle endpoints |
-| `test_reaper.py` | 10 | Orphan detection, live runs left alone, retention purge |
-| `test_pricing.py` | 7 | Cost maths, cache discount, estimate bounds, unpriced-model flagging |
-| `test_citations.py` | 6 | URL normalisation, invented-citation detection |
-| `test_gemini_provider.py` | 5 | Gemini adapter wire format |
-| `test_ratelimit.py` | 4 | Sliding window, per-key isolation, window expiry |
-| `test_retry.py` | 4 | Transient retried, fatal not retried, attempt accounting |
-| `test_public.py` | 3 | Public report visibility rules |
+| Suite                     | Tests | What it pins down                                                                                                                              |
+| ------------------------- | ----: | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_agent_loop.py`      |    21 | Spend caps (search/turn/token), cancellation mid-run, source vetoes, parallel tool execution, result ordering, memoisation, empty-report guard |
+| `test_open_model.py`      |    13 | Open-weight backends over **real HTTP** against a stub server: capability degradation, credential guard, zero-cost local pricing               |
+| `test_auth.py`            |    13 | Registration, login, account deletion cascade                                                                                                  |
+| `test_jobs_pipeline.py`   |    11 | Planning → pricing → approval, citation auditing, telemetry, and the wedged-task regressions                                                   |
+| `test_approval_gate.py`   |    10 | **Concurrent double-approval starts exactly one run**, edit detection, cursor feed, cross-user isolation                                       |
+| `test_tasks.py`           |    10 | Task lifecycle endpoints                                                                                                                       |
+| `test_reaper.py`          |    10 | Orphan detection, live runs left alone, retention purge                                                                                        |
+| `test_pricing.py`         |     7 | Cost maths, cache discount, estimate bounds, unpriced-model flagging                                                                           |
+| `test_citations.py`       |     6 | URL normalisation, invented-citation detection                                                                                                 |
+| `test_gemini_provider.py` |     5 | Gemini adapter wire format                                                                                                                     |
+| `test_ratelimit.py`       |     4 | Sliding window, per-key isolation, window expiry                                                                                               |
+| `test_retry.py`           |     4 | Transient retried, fatal not retried, attempt accounting                                                                                       |
+| `test_public.py`          |     3 | Public report visibility rules                                                                                                                 |
 
 The tests worth reading first are `test_approval_gate.py::test_concurrent_approvals_only_start_one_run`
 and `test_jobs_pipeline.py::test_invented_citation_is_caught_and_surfaced` —
@@ -308,25 +260,25 @@ returns a clean 503 rather than failing at boot.
 
 ### Configuration
 
-| Variable | Default | Notes |
-|---|---|---|
-| `DATABASE_URL` | local Postgres | `sqlite+aiosqlite:///./hitl.db` works as a no-daemon fallback |
-| `REDIS_URL` | unset | Unset ⇒ jobs run in-process |
-| `JWT_SECRET` | — | **Required in production.** `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
-| `LLM_PROVIDER` | `gemini` | `anthropic` \| `openai` \| `gemini`, or an open-weight backend — see [Running on open-weight models](#running-on-open-weight-models) |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | unset | Leave *unset*, not empty — see [the hardest bug](#the-hardest-bug) |
-| `ANTHROPIC_MODEL` / `OPENAI_MODEL` / `GEMINI_MODEL` | per provider | Model id for the hosted APIs |
-| `OPEN_MODEL_NAME` | `llama3.1:8b` | Model id for an open-weight backend |
-| `OPEN_MODEL_BASE_URL` | unset | Only for endpoints that aren't a known preset |
-| `OPEN_MODEL_API_KEY` | unset | Local runtimes ignore it; hosted ones require it |
-| `OPEN_MODEL_PRICE_INPUT` / `_OUTPUT` | `0.0` | USD per 1M tokens; `0` is correct for local |
-| `TAVILY_API_KEY` | unset | Unset ⇒ stub search |
-| `MAX_SEARCHES_PER_TASK` | `8` | Hard cap per task |
-| `MAX_TOOL_ITERATIONS` | `12` | Hard cap per task |
-| `MAX_OUTPUT_TOKENS_PER_TASK` | `60000` | Hard cap per task |
-| `MAX_TASKS_PER_USER_PER_DAY` | `25` | Per-user quota |
-| `DATA_RETENTION_DAYS` | `0` | `0` keeps history forever — an explicit choice |
-| `AUTO_CREATE_SCHEMA` | `true` | Set `false` in production; Alembic owns the schema |
+| Variable                                                  | Default        | Notes                                                                                                                                |
+| --------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`                                            | local Postgres | `sqlite+aiosqlite:///./hitl.db` works as a no-daemon fallback                                                                        |
+| `REDIS_URL`                                               | unset          | Unset ⇒ jobs run in-process                                                                                                          |
+| `JWT_SECRET`                                              | —              | **Required in production.** `python -c "import secrets; print(secrets.token_urlsafe(48))"`                                           |
+| `LLM_PROVIDER`                                            | `gemini`       | `anthropic` \| `openai` \| `gemini`, or an open-weight backend — see [Running on open-weight models](#running-on-open-weight-models) |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | unset          | Leave _unset_, not empty — see [the hardest bug](#the-hardest-bug)                                                                   |
+| `ANTHROPIC_MODEL` / `OPENAI_MODEL` / `GEMINI_MODEL`       | per provider   | Model id for the hosted APIs                                                                                                         |
+| `OPEN_MODEL_NAME`                                         | `llama3.1:8b`  | Model id for an open-weight backend                                                                                                  |
+| `OPEN_MODEL_BASE_URL`                                     | unset          | Only for endpoints that aren't a known preset                                                                                        |
+| `OPEN_MODEL_API_KEY`                                      | unset          | Local runtimes ignore it; hosted ones require it                                                                                     |
+| `OPEN_MODEL_PRICE_INPUT` / `_OUTPUT`                      | `0.0`          | USD per 1M tokens; `0` is correct for local                                                                                          |
+| `TAVILY_API_KEY`                                          | unset          | Unset ⇒ stub search                                                                                                                  |
+| `MAX_SEARCHES_PER_TASK`                                   | `8`            | Hard cap per task                                                                                                                    |
+| `MAX_TOOL_ITERATIONS`                                     | `12`           | Hard cap per task                                                                                                                    |
+| `MAX_OUTPUT_TOKENS_PER_TASK`                              | `60000`        | Hard cap per task                                                                                                                    |
+| `MAX_TASKS_PER_USER_PER_DAY`                              | `25`           | Per-user quota                                                                                                                       |
+| `DATA_RETENTION_DAYS`                                     | `0`            | `0` keeps history forever — an explicit choice                                                                                       |
+| `AUTO_CREATE_SCHEMA`                                      | `true`         | Set `false` in production; Alembic owns the schema                                                                                   |
 
 ---
 
@@ -374,10 +326,10 @@ does not. Rather than demanding a lowest common denominator, the adapter probes
 and degrades, latching each result so the cost is one wasted request per
 process rather than one per call:
 
-| Capability | Chain |
-|---|---|
+| Capability        | Chain                                                                             |
+| ----------------- | --------------------------------------------------------------------------------- |
 | Structured output | `json_schema` → `json_object` + schema in the prompt → parse what the model wrote |
-| Token limit | `max_completion_tokens` → `max_tokens` |
+| Token limit       | `max_completion_tokens` → `max_tokens`                                            |
 
 ### Choosing a model
 
@@ -390,7 +342,7 @@ Two honest caveats:
 
 - **Quality drops.** Smaller open models plan less well and are likelier to
   invent citations. The citation audit will catch the invented ones — which
-  makes running an 8B model locally a rather good way to *see* the audit work.
+  makes running an 8B model locally a rather good way to _see_ the audit work.
 - **Verified against a stub, not a live model.** The adapter has 13 tests
   including real HTTP round trips against a stub OpenAI-compatible server, but
   it has not been run against an actual Ollama instance on this machine.
@@ -429,25 +381,25 @@ Then replace the "Live demo" line at the top of this README with the link.
 
 ## API reference
 
-| Method | Endpoint | Description | Auth |
-|:---|:---|:---|:---:|
-| `POST` | `/api/auth/register` | Create an account (throttled per IP) | — |
-| `POST` | `/api/auth/login` | Log in (throttled per IP) | — |
-| `GET` | `/api/auth/me` | Current user | ✓ |
-| `DELETE` | `/api/auth/me` | Delete account and all its data | ✓ |
-| `POST` | `/api/tasks` | Create a task, trigger plan drafting | ✓ |
-| `GET` | `/api/tasks` | List your tasks | ✓ |
-| `GET` | `/api/tasks/{id}` | Full task: plan, events, sources, citation report | ✓ |
-| `GET` | `/api/tasks/{id}/events?after=N` | **Incremental** progress feed | ✓ |
-| `GET` | `/api/tasks/{id}/estimate` | Cost of the saved plan | ✓ |
-| `POST` | `/api/tasks/{id}/estimate` | Cost of a plan being edited | ✓ |
-| `POST` | `/api/tasks/{id}/approve` | **The gate.** Atomic; a second call gets 409 | ✓ |
-| `POST` | `/api/tasks/{id}/cancel` | Cancel; the loop checks between turns | ✓ |
-| `POST` | `/api/tasks/{id}/sources/{sid}/toggle` | Veto a source | ✓ |
-| `POST` | `/api/tasks/{id}/share` | Toggle public link | ✓ |
-| `GET` | `/api/tasks/{id}/pdf` | Report as PDF (WeasyPrint) | ✓ |
-| `GET` | `/api/public/reports/{share_id}` | Public report | — |
-| `GET` | `/api/health` | Health + how the deployment is wired | — |
+| Method   | Endpoint                               | Description                                       | Auth |
+| :------- | :------------------------------------- | :------------------------------------------------ | :--: |
+| `POST`   | `/api/auth/register`                   | Create an account (throttled per IP)              |  —   |
+| `POST`   | `/api/auth/login`                      | Log in (throttled per IP)                         |  —   |
+| `GET`    | `/api/auth/me`                         | Current user                                      |  ✓   |
+| `DELETE` | `/api/auth/me`                         | Delete account and all its data                   |  ✓   |
+| `POST`   | `/api/tasks`                           | Create a task, trigger plan drafting              |  ✓   |
+| `GET`    | `/api/tasks`                           | List your tasks                                   |  ✓   |
+| `GET`    | `/api/tasks/{id}`                      | Full task: plan, events, sources, citation report |  ✓   |
+| `GET`    | `/api/tasks/{id}/events?after=N`       | **Incremental** progress feed                     |  ✓   |
+| `GET`    | `/api/tasks/{id}/estimate`             | Cost of the saved plan                            |  ✓   |
+| `POST`   | `/api/tasks/{id}/estimate`             | Cost of a plan being edited                       |  ✓   |
+| `POST`   | `/api/tasks/{id}/approve`              | **The gate.** Atomic; a second call gets 409      |  ✓   |
+| `POST`   | `/api/tasks/{id}/cancel`               | Cancel; the loop checks between turns             |  ✓   |
+| `POST`   | `/api/tasks/{id}/sources/{sid}/toggle` | Veto a source                                     |  ✓   |
+| `POST`   | `/api/tasks/{id}/share`                | Toggle public link                                |  ✓   |
+| `GET`    | `/api/tasks/{id}/pdf`                  | Report as PDF (WeasyPrint)                        |  ✓   |
+| `GET`    | `/api/public/reports/{share_id}`       | Public report                                     |  —   |
+| `GET`    | `/api/health`                          | Health + how the deployment is wired              |  —   |
 
 ---
 

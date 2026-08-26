@@ -19,12 +19,18 @@ from app.config import settings
 
 
 class SlidingWindowLimiter:
+    """In-memory sliding window, keyed by caller.
+
+    Single-process by design: correct for one API instance, and the interface
+    does not change when the counter moves to Redis behind several.
+    """
     def __init__(self, max_hits: int, window_seconds: int) -> None:
         self.max_hits = max_hits
         self.window_seconds = window_seconds
         self._hits: dict[str, deque[float]] = defaultdict(deque)
 
     def check(self, key: str) -> None:
+        """Record a hit, raising 429 with Retry-After once the window is full."""
         now = time.monotonic()
         cutoff = now - self.window_seconds
         hits = self._hits[key]
@@ -66,10 +72,12 @@ _login_limiter = SlidingWindowLimiter(
 
 
 async def limit_registration(request: Request) -> None:
+    """Per-IP throttle for account creation."""
     if settings.rate_limit_enabled:
         _register_limiter.check(_client_ip(request))
 
 
 async def limit_login(request: Request) -> None:
+    """Per-IP throttle for login attempts, to blunt credential stuffing."""
     if settings.rate_limit_enabled:
         _login_limiter.check(_client_ip(request))

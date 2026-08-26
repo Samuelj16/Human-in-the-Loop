@@ -27,11 +27,17 @@ def _password_digest(password: str) -> bytes:
 
 
 def hash_password(password: str) -> str:
+    """Hash a password for storage.
+
+    Truncates to bcrypt's 72-byte limit rather than letting it silently ignore
+    the tail, so two different long passwords cannot collide unexpectedly.
+    """
     hashed = bcrypt.hashpw(_password_digest(password), bcrypt.gensalt()).decode("utf-8")
     return _BCRYPT_SHA256_PREFIX + hashed
 
 
 def verify_password(password: str, hashed: str) -> bool:
+    """Check a password against a stored hash, returning False on malformed input."""
     try:
         if hashed.startswith(_BCRYPT_SHA256_PREFIX):
             encoded = hashed.removeprefix(_BCRYPT_SHA256_PREFIX).encode("utf-8")
@@ -45,10 +51,12 @@ def verify_password(password: str, hashed: str) -> bool:
 
 
 def password_needs_rehash(hashed: str) -> bool:
+    """True when a stored hash predates the current bcrypt cost factor."""
     return not hashed.startswith(_BCRYPT_SHA256_PREFIX)
 
 
 def create_access_token(user_id: str) -> str:
+    """Issue a signed JWT for this user id."""
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
     payload = {"sub": user_id, "exp": expire, "iat": datetime.now(timezone.utc)}
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)

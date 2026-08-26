@@ -160,6 +160,12 @@ async def _accumulate(task_id: str, response: LLMResponse) -> None:
 # Job 1 - draft the plan, price it, then stop and wait for a human
 # --------------------------------------------------------------------------
 async def plan_task(ctx: dict | None, task_id: str) -> None:
+    """Draft a plan, price it, then stop and wait for a human.
+
+    Ends in `awaiting_approval` with a cost estimate attached. Every failure path
+    writes a status: a background job that dies silently leaves the UI spinning
+    with nothing behind it.
+    """
     async with SessionLocal() as session:
         task = await session.get(ResearchTask, task_id)
         if task is None or task.status == TaskStatus.CANCELLED:
@@ -227,6 +233,12 @@ async def plan_task(ctx: dict | None, task_id: str) -> None:
 # Job 2 - run the approved plan
 # --------------------------------------------------------------------------
 async def run_task(ctx: dict | None, task_id: str) -> None:
+    """Execute an approved plan and audit the resulting report.
+
+    Runs the agent loop, streams progress into task_events, records per-turn
+    telemetry, then checks every citation against the sources actually retrieved
+    before marking the task complete.
+    """
     async with SessionLocal() as session:
         task = await session.get(ResearchTask, task_id)
         if task is None or task.status == TaskStatus.CANCELLED:
@@ -260,6 +272,7 @@ async def run_task(ctx: dict | None, task_id: str) -> None:
     )
 
     async def on_turn(phase: str, response: LLMResponse) -> None:
+        """Persist one model call and roll it into the task totals."""
         await _record_turn(task_id, phase, provider.name, response)
         await _accumulate(task_id, response)
 

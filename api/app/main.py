@@ -19,6 +19,11 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize schema on startup
+    """Start-up and shut-down work.
+
+    Reaps anything left running by a previous process, then - only when there is
+    no arq worker to run it on a cron - starts the periodic sweep here.
+    """
     await init_db()
 
     # Anything left running from a previous process has lost its worker.
@@ -62,6 +67,7 @@ app.include_router(public.router)
 
 @app.get("/", tags=["health"])
 async def root() -> dict[str, str]:
+    """Tiny landing payload pointing at the docs."""
     return {"app": settings.app_name, "docs": "/docs", "status": "ok"}
 
 

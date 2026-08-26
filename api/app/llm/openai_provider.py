@@ -26,6 +26,11 @@ from app.llm.retry import with_retry
 
 
 class OpenAIProvider(LLMProvider):
+    """OpenAI, via the official `openai` SDK.
+
+    Also the base class for any OpenAI-compatible endpoint - see
+    openai_compatible.py for open-weight backends and gemini_provider.py.
+    """
     name = "openai"
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
@@ -124,6 +129,7 @@ class OpenAIProvider(LLMProvider):
     ) -> LLMResponse:
         # `cache_prefix` is a no-op here: OpenAI caches long stable prefixes
         # automatically, with no breakpoint to declare.
+        """One research turn, with tools."""
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": self._to_wire(system, messages),
@@ -159,6 +165,7 @@ class OpenAIProvider(LLMProvider):
         schema: dict[str, Any],
         max_tokens: int = 2000,
     ) -> tuple[dict[str, Any], LLMResponse]:
+        """One turn constrained to a JSON schema, so no output parsing is needed."""
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": self._to_wire(system, messages),

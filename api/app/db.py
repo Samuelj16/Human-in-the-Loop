@@ -8,6 +8,7 @@ from app.config import settings
 
 
 class Base(DeclarativeBase):
+    """Declarative base shared by every model, and by Alembic's autogenerate."""
     pass
 
 
@@ -32,5 +33,10 @@ async def init_db() -> None:
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency yielding a request-scoped session.
+
+    Background jobs deliberately do not use this - they open short sessions of
+    their own so a slow model call never pins a connection.
+    """
     async with SessionLocal() as session:
         yield session

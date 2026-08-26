@@ -94,13 +94,16 @@ class Budget:
     usage: Usage = field(default_factory=Usage)
 
     def record(self, usage: Usage) -> None:
+        """Fold one call's usage into the running total."""
         self.usage = self.usage + usage
 
     @property
     def searches_left(self) -> int:
+        """Searches still permitted by the cap."""
         return max(0, self.max_searches - self.searches_used)
 
     def exhausted_reason(self) -> str | None:
+        """Why the run must stop, or None if it may continue."""
         if self.iterations_used >= self.max_iterations:
             return f"turn limit of {self.max_iterations} reached"
         if self.searches_used >= self.max_searches:
@@ -137,6 +140,10 @@ async def _noop_turn(phase: str, response: LLMResponse) -> None:
 
 @dataclass
 class AgentHooks:
+    """Callbacks the caller supplies to persist progress and allow cancelling.
+
+    The loop stays free of database code; the job layer decides what to store.
+    """
     on_event: EventFn = _noop_event
     on_source: SourceFn = _noop_source
     should_cancel: CancelFn = _never_cancel
@@ -145,6 +152,7 @@ class AgentHooks:
 
 @dataclass
 class ResearchPlan:
+    """A drafted plan awaiting human approval."""
     plan: list[str]
     clarifying_questions: list[str] = field(default_factory=list)
     restated_question: str = ""
@@ -152,6 +160,7 @@ class ResearchPlan:
 
 @dataclass
 class ResearchOutcome:
+    """The finished run: the report, what it cost, and why it stopped."""
     report_markdown: str
     usage: Usage
     searches_used: int
@@ -295,6 +304,13 @@ async def run_research(
     hooks: AgentHooks | None = None,
     excluded_urls: set[str] | None = None,
 ) -> ResearchOutcome:
+    """Execute an approved plan and return the finished report.
+
+    The core loop: ask the model, run whatever tools it requests, feed the results
+    back, and stop when it writes the report or runs out of budget. Cancellation
+    is checked between turns, and the caps are enforced here rather than trusted
+    to the model.
+    """
     hooks = hooks or AgentHooks()
     excluded_urls = excluded_urls or set()
     memo: dict[str, str] = {}
@@ -374,6 +390,11 @@ async def run_research(
         # turns N round trips into one. Results are reassembled in call order,
         # because tool_result blocks must line up with their tool_use ids.
         async def resolve(call: ToolCall) -> Message:
+            """Run one tool call and wrap the result for the model.
+
+            A failing tool returns an error result rather than raising, so one bad search
+            does not end the run.
+            """
             if call.name != SEARCH_TOOL.name:
                 return tool_result_message(
                     call, f"Unknown tool {call.name!r}.", is_error=True

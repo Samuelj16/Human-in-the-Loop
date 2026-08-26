@@ -29,6 +29,11 @@ async def register(body: Credentials, session: SessionDep) -> TokenResponse:
     # creates a fresh per-user paid-work quota. Public deployments should require
     # a non-self-issued entitlement here (invitation, verified organization, or
     # billing tenant) rather than treating email uniqueness as an abuse boundary.
+    """Create an account and return an access token.
+
+    Throttled per IP: the per-user task quota only means something once an
+    account exists, so registration needs its own limit.
+    """
     email = body.email.lower()
     existing = await session.scalar(select(User.id).where(User.email == email))
     if existing:
@@ -46,6 +51,7 @@ async def register(body: Credentials, session: SessionDep) -> TokenResponse:
     dependencies=[Depends(limit_login)],
 )
 async def login(body: Credentials, session: SessionDep) -> TokenResponse:
+    """Exchange credentials for an access token."""
     user = await session.scalar(select(User).where(User.email == body.email.lower()))
     # Same message either way - do not leak which emails exist.
     if user is None or not verify_password(body.password, user.hashed_password):
@@ -58,6 +64,7 @@ async def login(body: Credentials, session: SessionDep) -> TokenResponse:
 
 @router.get("/me", response_model=UserOut)
 async def me(user: CurrentUser) -> User:
+    """Return the authenticated account."""
     return user
 
 

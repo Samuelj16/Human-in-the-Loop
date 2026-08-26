@@ -10,19 +10,23 @@ from app.config import settings
 
 @dataclass(frozen=True)
 class SearchResult:
+    """One search hit, trimmed to what the model actually needs."""
     url: str
     title: str
     snippet: str
 
     def as_prompt_block(self) -> str:
+        """Render this hit for inclusion in a tool result."""
         return f"- {self.title}\n  {self.url}\n  {self.snippet}"
 
 
 class SearchClient(abc.ABC):
+    """The search surface the agent depends on - one method, so it is easy to swap."""
     name: str
 
     @abc.abstractmethod
     async def search(self, query: str, *, max_results: int = 5) -> list[SearchResult]:
+        """Return up to `max_results` hits for `query`."""
         ...
 
 

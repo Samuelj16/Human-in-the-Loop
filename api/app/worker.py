@@ -10,12 +10,18 @@ from app.reaper import reap_job, retention_job
 
 
 async def startup(ctx: dict) -> None:
+    """Ensure the schema exists before the worker takes its first job."""
     from app.db import init_db
 
     await init_db()
 
 
 class WorkerSettings:
+    """arq entrypoint: `arq app.worker.WorkerSettings`.
+
+    Runs the same jobs the API can run in-process, plus the periodic reaper and
+    retention sweeps.
+    """
     functions = [plan_task, run_task, reap_job, retention_job]
     # Sweep for tasks orphaned by a crashed or redeployed worker.
     cron_jobs = [

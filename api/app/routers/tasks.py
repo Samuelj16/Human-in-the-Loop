@@ -37,6 +37,11 @@ async def create_task(
     # Public deployments also need an atomic quota tied to a non-self-issued
     # tenant/billing entitlement; new accounts and concurrent requests can bypass
     # this count before paid planning work is enqueued below.
+    """Create a research task and start plan drafting.
+
+    Returns immediately; the plan is drafted in the background and the task lands
+    in `awaiting_approval`. Subject to the per-user daily cap.
+    """
     today_start = datetime.combine(
         datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc
     )
@@ -67,6 +72,7 @@ async def create_task(
 
 @router.get("", response_model=list[TaskSummary])
 async def list_tasks(user: CurrentUser, session: SessionDep) -> list[ResearchTask]:
+    """List this user's tasks, newest first."""
     result = await session.scalars(
         select(ResearchTask)
         .where(ResearchTask.user_id == user.id)
@@ -79,6 +85,11 @@ async def list_tasks(user: CurrentUser, session: SessionDep) -> list[ResearchTas
 async def get_task(
     task_id: str, user: CurrentUser, session: SessionDep
 ) -> ResearchTask:
+    """Full task detail: plan, events, sources, and the citation audit.
+
+    Prefer `/events?after=N` while a run is in flight - this returns the entire
+    history every time.
+    """
     result = await session.scalars(
         select(ResearchTask)
         .where(ResearchTask.id == task_id, ResearchTask.user_id == user.id)
@@ -100,6 +111,12 @@ async def approve_plan(
     user: CurrentUser,
     session: SessionDep,
 ) -> ResearchTask:
+    """Approve a drafted plan and start the research run.
+
+    The gate: this is the call that authorises spending money, so the status
+    check is only advisory and the real transition is a conditional UPDATE the
+    database arbitrates. Two concurrent clicks cannot buy two runs.
+    """
     task = await session.get(ResearchTask, task_id)
     if task is None or task.user_id != user.id:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -156,6 +173,7 @@ async def approve_plan(
 async def cancel_task(
     task_id: str, user: CurrentUser, session: SessionDep
 ) -> ResearchTask:
+    """Cancel a task. The agent loop checks between turns and stops."""
     task = await session.get(ResearchTask, task_id)
     if task is None or task.user_id != user.id:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -176,6 +194,7 @@ async def toggle_source_exclusion(
     user: CurrentUser,
     session: SessionDep,
 ) -> Source:
+    """Veto (or un-veto) a source, excluding it from later runs."""
     task = await session.get(ResearchTask, task_id)
     if task is None or task.user_id != user.id:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -196,6 +215,7 @@ async def toggle_source_exclusion(
 async def toggle_share(
     task_id: str, user: CurrentUser, session: SessionDep
 ) -> ResearchTask:
+    """Toggle the public share link for a finished report."""
     task = await session.get(ResearchTask, task_id)
     if task is None or task.user_id != user.id:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -303,6 +323,11 @@ async def estimate_candidate_plan(
 async def download_pdf(
     task_id: str, user: CurrentUser, session: SessionDep
 ) -> Response:
+    """Render the finished report as a PDF attachment.
+
+    Returns 503 when the image lacks WeasyPrint's system libraries, rather than
+    failing at boot.
+    """
     from app.pdf import PDFUnavailable, render_report_pdf
 
     task = await session.get(ResearchTask, task_id)

@@ -13,16 +13,19 @@ AnswerValue = Annotated[str, Field(max_length=2000)]
 
 
 class Credentials(BaseModel):
+    """Email and password for registration or login."""
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
 
 
 class TokenResponse(BaseModel):
+    """A freshly issued access token."""
     access_token: str
     token_type: str = "bearer"
 
 
 class UserOut(BaseModel):
+    """Public view of an account."""
     model_config = ConfigDict(from_attributes=True)
     id: str
     email: str
@@ -30,6 +33,7 @@ class UserOut(BaseModel):
 
 
 class CreateTaskRequest(BaseModel):
+    """A new research question."""
     query: str = Field(min_length=8, max_length=2000)
 
 
@@ -43,6 +47,7 @@ class ApprovePlanRequest(BaseModel):
 
     @model_validator(mode="after")
     def limit_aggregate_prompt_input(self) -> "ApprovePlanRequest":
+        """Cap total edited text, since all of it ends up in a model prompt."""
         size = sum(len(step.encode("utf-8")) for step in self.plan)
         size += sum(
             len(key.encode("utf-8")) + len(value.encode("utf-8"))
@@ -54,6 +59,7 @@ class ApprovePlanRequest(BaseModel):
 
 
 class EventOut(BaseModel):
+    """One progress event, carrying the `seq` cursor the UI polls with."""
     model_config = ConfigDict(from_attributes=True)
     id: str
     seq: int = 0
@@ -64,6 +70,7 @@ class EventOut(BaseModel):
 
 
 class SourceOut(BaseModel):
+    """A retrieved source, including whether the user vetoed it."""
     model_config = ConfigDict(from_attributes=True)
     id: str
     url: str
@@ -73,6 +80,7 @@ class SourceOut(BaseModel):
 
 
 class TaskOut(BaseModel):
+    """A task without its event and source lists."""
     model_config = ConfigDict(from_attributes=True)
     id: str
     query: str
@@ -102,11 +110,13 @@ class TaskOut(BaseModel):
 
 
 class TaskDetail(TaskOut):
+    """A task with its full event log and source ledger."""
     events: list[EventOut] = Field(default_factory=list)
     sources: list[SourceOut] = Field(default_factory=list)
 
 
 class TaskSummary(BaseModel):
+    """List-view fields only - kept small because the sidebar polls it."""
     model_config = ConfigDict(from_attributes=True)
     id: str
     query: str
@@ -116,6 +126,7 @@ class TaskSummary(BaseModel):
 
 
 class PublicReport(BaseModel):
+    """What a share link exposes: the report and its sources, and nothing else."""
     query: str
     report_markdown: str
     created_at: datetime
@@ -142,6 +153,7 @@ class EventsPage(BaseModel):
 
 
 class CostEstimateOut(BaseModel):
+    """A priced plan, as shown on the approval gate."""
     model: str
     expected_usd: float
     low_usd: float

@@ -1,0 +1,261 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 680" width="100%" height="100%" style="background-color: #0d1117; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <defs>
+    <!-- Gradients -->
+    <linearGradient id="bg-box" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#161b22" />
+      <stop offset="100%" stop-color="#0e1319" />
+    </linearGradient>
+    <linearGradient id="client-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="api-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1b4b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="worker-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2e1065" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="db-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#064e3b" />
+      <stop offset="100%" stop-color="#022c22" />
+    </linearGradient>
+    <linearGradient id="gate-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#78350f" />
+      <stop offset="100%" stop-color="#451a03" />
+    </linearGradient>
+    
+    <!-- Drop Shadows -->
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="115%" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.6"/>
+    </filter>
+
+    <!-- Marker Arrowheads -->
+    <marker id="arrow-cyan" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#38bdf8" />
+    </marker>
+    <marker id="arrow-indigo" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#818cf8" />
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#fbbf24" />
+    </marker>
+    <marker id="arrow-emerald" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#34d399" />
+    </marker>
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#c084fc" />
+    </marker>
+  </defs>
+
+  <!-- Title & Subtitle -->
+  <text x="550" y="42" text-anchor="middle" fill="#f8fafc" font-size="22" font-weight="700" letter-spacing="0.5">HUMAN-IN-THE-LOOP DEEP RESEARCH AGENT</text>
+  <text x="550" y="66" text-anchor="middle" fill="#94a3b8" font-size="13" font-weight="400">System Architecture &amp; Asynchronous End-to-End Data Flow</text>
+
+  <!-- ==================== TIER 1: FRONTEND (VERCEL / NEXT.JS) ==================== -->
+  <g transform="translate(40, 95)">
+    <!-- Container Box -->
+    <rect width="240" height="540" rx="14" fill="url(#client-grad)" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
+    <rect width="240" height="38" rx="14" fill="#1e293b"/>
+    <path d="M0 24 h240 v14 H0 z" fill="#1e293b"/>
+    <text x="120" y="24" text-anchor="middle" fill="#38bdf8" font-size="13" font-weight="700" letter-spacing="0.5">🖥️  CLIENT &amp; BFF TIER (Vercel)</text>
+
+    <!-- Component 1: React 19 UI -->
+    <g transform="translate(15, 55)">
+      <rect width="210" height="135" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1.5"/>
+      <text x="105" y="24" text-anchor="middle" fill="#f1f5f9" font-size="13" font-weight="600">Next.js 16 App Router</text>
+      <text x="105" y="42" text-anchor="middle" fill="#64748b" font-size="11">React 19 · Tailwind CSS</text>
+      <line x1="15" y1="52" x2="195" y2="52" stroke="#334155" stroke-dasharray="3 3"/>
+      <text x="20" y="72" fill="#cbd5e1" font-size="11">● Plan Editor &amp; Live Pricer</text>
+      <text x="20" y="92" fill="#cbd5e1" font-size="11">● Telemetry Event Feed (Cursor)</text>
+      <text x="20" y="112" fill="#cbd5e1" font-size="11">● Source Ledger &amp; Human Veto</text>
+      <text x="20" y="128" fill="#34d399" font-size="10" font-weight="600">✓ Zero Tokens Exposed to Client</text>
+    </g>
+
+    <!-- Component 2: BFF Proxy & Auth Handlers -->
+    <g transform="translate(15, 205)">
+      <rect width="210" height="145" rx="10" fill="#0f172a" stroke="#38bdf8" stroke-width="1.5"/>
+      <text x="105" y="24" text-anchor="middle" fill="#38bdf8" font-size="12" font-weight="700">Next.js Server Proxy (BFF)</text>
+      <text x="105" y="42" text-anchor="middle" fill="#94a3b8" font-size="11">/api/proxy/* &amp; /api/auth/*</text>
+      <rect x="15" y="54" width="180" height="38" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+      <text x="105" y="70" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="600">🔒 httpOnly Cookie Storage</text>
+      <text x="105" y="84" text-anchor="middle" fill="#94a3b8" font-size="9.5">Prevents XSS Session Exfiltration</text>
+      <text x="20" y="110" fill="#94a3b8" font-size="10.5">● Injects Server-Side Bearer JWT</text>
+      <text x="20" y="128" fill="#94a3b8" font-size="10.5">● Proxies Fast Streaming &amp; Events</text>
+    </g>
+
+    <!-- Component 3: Human Gate Widget -->
+    <g transform="translate(15, 365)">
+      <rect width="210" height="155" rx="10" fill="url(#gate-grad)" stroke="#f59e0b" stroke-width="1.5"/>
+      <text x="105" y="25" text-anchor="middle" fill="#fef3c7" font-size="12" font-weight="700">HUMAN APPROVAL GATE</text>
+      <text x="105" y="42" text-anchor="middle" fill="#fde68a" font-size="10">Decision Boundary &amp; Cost Control</text>
+      
+      <rect x="12" y="52" width="186" height="42" rx="6" fill="#451a03" stroke="#b45309" stroke-width="1"/>
+      <text x="20" y="68" fill="#fef08a" font-size="10" font-weight="700">Estimated Cost: $0.15</text>
+      <text x="20" y="84" fill="#fed7aa" font-size="9">Range: $0.12–$0.26 (5 searches, 6 turns)</text>
+      
+      <text x="15" y="112" fill="#ffedd5" font-size="10">1. Modify / Reorder Plan Steps</text>
+      <text x="15" y="128" fill="#ffedd5" font-size="10">2. Answer Clarifying Prompts</text>
+      <text x="15" y="144" fill="#a7f3d0" font-size="10" font-weight="700">3. Authorize Budget Spending</text>
+    </g>
+  </g>
+
+  <!-- ==================== TIER 2: FASTAPI & QUEUE (RAILWAY) ==================== -->
+  <g transform="translate(325, 95)">
+    <!-- Container Box -->
+    <rect width="450" height="540" rx="14" fill="url(#bg-box)" stroke="#475569" stroke-width="1.5" filter="url(#shadow)"/>
+    <rect width="450" height="38" rx="14" fill="#1e293b"/>
+    <path d="M0 24 h450 v14 H0 z" fill="#1e293b"/>
+    <text x="225" y="24" text-anchor="middle" fill="#818cf8" font-size="13" font-weight="700" letter-spacing="0.5">⚙️  CORE BACKEND &amp; ASYNC ENGINE (FastAPI + Arq)</text>
+
+    <!-- FastAPI Router Box -->
+    <g transform="translate(18, 55)">
+      <rect width="414" height="135" rx="10" fill="url(#api-grad)" stroke="#6366f1" stroke-width="1.5"/>
+      <text x="207" y="24" text-anchor="middle" fill="#e0e7ff" font-size="13" font-weight="700">FastAPI REST Gateway (Async)</text>
+      <text x="207" y="40" text-anchor="middle" fill="#a5b4fc" font-size="10.5">JWT Auth · Sliding-Window Rate Limiter · Pydantic V2</text>
+      
+      <rect x="15" y="52" width="188" height="70" rx="6" fill="#0f172a" stroke="#334155"/>
+      <text x="25" y="70" fill="#38bdf8" font-size="10.5" font-weight="600">POST /api/tasks</text>
+      <text x="25" y="86" fill="#94a3b8" font-size="9.5">Create &amp; kick off plan draft</text>
+      <text x="25" y="104" fill="#38bdf8" font-size="10.5" font-weight="600">GET /api/tasks/{id}/events</text>
+      <text x="25" y="116" fill="#94a3b8" font-size="9">Incremental cursor polling (?after=N)</text>
+
+      <rect x="211" y="52" width="188" height="70" rx="6" fill="#0f172a" stroke="#334155"/>
+      <text x="221" y="70" fill="#fbbf24" font-size="10.5" font-weight="600">POST /api/tasks/{id}/approve</text>
+      <text x="221" y="86" fill="#fde68a" font-size="9">Atomic SQL transition (Prevents double-spend)</text>
+      <text x="221" y="104" fill="#38bdf8" font-size="10.5" font-weight="600">POST /api/tasks/{id}/estimate</text>
+      <text x="221" y="116" fill="#94a3b8" font-size="9">Pre-spend formula calculation</text>
+    </g>
+
+    <!-- Redis Queue Box -->
+    <g transform="translate(18, 202)">
+      <rect width="414" height="60" rx="10" fill="#1e1b4b" stroke="#ec4899" stroke-width="1.5"/>
+      <text x="207" y="24" text-anchor="middle" fill="#fbcfe8" font-size="12" font-weight="700">Redis 7 + Arq Message Broker</text>
+      <text x="207" y="44" text-anchor="middle" fill="#f472b6" font-size="10.5">Job Queue: [ plan_task ] ➔ [ run_task ] · Automatic Retry &amp; Dead-Letter</text>
+    </g>
+
+    <!-- Autonomous Agent Execution Box -->
+    <g transform="translate(18, 275)">
+      <rect width="414" height="245" rx="10" fill="url(#worker-grad)" stroke="#a855f7" stroke-width="1.5"/>
+      <text x="207" y="24" text-anchor="middle" fill="#f3e8ff" font-size="13" font-weight="700">Autonomous Agent Loop (loop.py)</text>
+      <text x="207" y="40" text-anchor="middle" fill="#d8b4fe" font-size="10.5">Hand-Crafted Python State Machine (Zero Heavy Frameworks)</text>
+
+      <!-- Step 1: Planning -->
+      <rect x="15" y="52" width="188" height="85" rx="6" fill="#0f172a" stroke="#6b21a8"/>
+      <text x="25" y="70" fill="#c084fc" font-size="11" font-weight="700">Phase 1: Draft Plan</text>
+      <text x="25" y="86" fill="#cbd5e1" font-size="10">● Constrained JSON Schema</text>
+      <text x="25" y="100" fill="#cbd5e1" font-size="10">● Extract Clarifications</text>
+      <text x="25" y="116" fill="#fbbf24" font-size="10" font-weight="600">● Halt &amp; Wait for Approval</text>
+
+      <!-- Step 2: Investigation -->
+      <rect x="211" y="52" width="188" height="85" rx="6" fill="#0f172a" stroke="#6b21a8"/>
+      <text x="221" y="70" fill="#c084fc" font-size="11" font-weight="700">Phase 2: Deep Research</text>
+      <text x="221" y="86" fill="#cbd5e1" font-size="10">● Multi-Turn Tool Loop</text>
+      <text x="221" y="100" fill="#cbd5e1" font-size="10">● Parallel asyncio.gather Searches</text>
+      <text x="221" y="116" fill="#cbd5e1" font-size="10">● Per-Run Search Memoization</text>
+
+      <!-- Step 3: Citation Audit & Budget Guard -->
+      <rect x="15" y="145" width="384" height="85" rx="6" fill="#0f172a" stroke="#3b82f6"/>
+      <text x="25" y="165" fill="#60a5fa" font-size="11" font-weight="700">Safety Mechanisms &amp; Citation Integrity (citations.py)</text>
+      <text x="25" y="184" fill="#94a3b8" font-size="10">● Hard Budget Caps: MAX_SEARCHES (8) · MAX_TURNS (12) · MAX_TOKENS (60k)</text>
+      <text x="25" y="200" fill="#34d399" font-size="10" font-weight="600">● Real-time Source Ledger Diff: Verified (Fetched) vs Unverified (Model Hallucination)</text>
+      <text x="25" y="216" fill="#94a3b8" font-size="9.5">● 15-Minute Background Reaper: Detects and cleans up orphaned worker processes</text>
+    </g>
+  </g>
+
+  <!-- ==================== TIER 3: DATA & EXTERNAL APIS ==================== -->
+  <g transform="translate(815, 95)">
+    <!-- Container Box -->
+    <rect width="245" height="540" rx="14" fill="url(#bg-box)" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
+    <rect width="245" height="38" rx="14" fill="#1e293b"/>
+    <path d="M0 24 h245 v14 H0 z" fill="#1e293b"/>
+    <text x="122" y="24" text-anchor="middle" fill="#34d399" font-size="13" font-weight="700" letter-spacing="0.5">🗄️  STORAGE &amp; EXTERNAL</text>
+
+    <!-- PostgreSQL Box -->
+    <g transform="translate(15, 55)">
+      <rect width="215" height="235" rx="10" fill="url(#db-grad)" stroke="#10b981" stroke-width="1.5"/>
+      <text x="107" y="24" text-anchor="middle" fill="#a7f3d0" font-size="13" font-weight="700">PostgreSQL 16 (asyncpg)</text>
+      <text x="107" y="40" text-anchor="middle" fill="#6ee7b7" font-size="10">SQLAlchemy 2.0 Async + Alembic</text>
+      
+      <rect x="12" y="52" width="191" height="170" rx="6" fill="#022c22" stroke="#047857"/>
+      <text x="20" y="70" fill="#f0fdf4" font-size="11" font-weight="600">Relational &amp; JSONB Tables:</text>
+      <text x="20" y="90" fill="#a7f3d0" font-size="10">● <tspan font-weight="600">users</tspan> (Credentials &amp; Auth)</text>
+      <text x="20" y="108" fill="#a7f3d0" font-size="10">● <tspan font-weight="600">research_tasks</tspan> (State, Plan JSON)</text>
+      <text x="20" y="126" fill="#a7f3d0" font-size="10">● <tspan font-weight="600">task_events</tspan> (Monotonic Telemetry)</text>
+      <text x="20" y="144" fill="#a7f3d0" font-size="10">● <tspan font-weight="600">sources</tspan> (Ledger &amp; Veto Flags)</text>
+      <text x="20" y="162" fill="#a7f3d0" font-size="10">● <tspan font-weight="600">llm_turns</tspan> (Audit: $, Tokens, Latency)</text>
+      <line x1="20" y1="172" x2="190" y2="172" stroke="#059669" stroke-width="0.5"/>
+      <text x="20" y="188" fill="#34d399" font-size="9.5" font-weight="600">✓ ON DELETE CASCADE Enforcement</text>
+      <text x="20" y="204" fill="#34d399" font-size="9.5" font-weight="600">✓ No Transactions Held Over LLM Latency</text>
+    </g>
+
+    <!-- External LLMs Box -->
+    <g transform="translate(15, 305)">
+      <rect width="215" height="110" rx="10" fill="#0f172a" stroke="#818cf8" stroke-width="1.5"/>
+      <text x="107" y="24" text-anchor="middle" fill="#c7d2fe" font-size="12" font-weight="700">LLM Provider Layer</text>
+      <text x="107" y="40" text-anchor="middle" fill="#818cf8" font-size="10">Provider-Neutral Adapter</text>
+      <text x="20" y="62" fill="#cbd5e1" font-size="10">● Google Gemini 3.6 Flash / Pro</text>
+      <text x="20" y="78" fill="#cbd5e1" font-size="10">● Anthropic Claude 3.5 / Opus 5</text>
+      <text x="20" y="94" fill="#cbd5e1" font-size="10">● OpenAI GPT-4o / Open-Weights</text>
+      <text x="20" y="106" fill="#34d399" font-size="9" font-weight="600">✓ Prompt Caching Enabled (~29% savings)</text>
+    </g>
+
+    <!-- External Search Box -->
+    <g transform="translate(15, 430)">
+      <rect width="215" height="90" rx="10" fill="#0f172a" stroke="#38bdf8" stroke-width="1.5"/>
+      <text x="107" y="24" text-anchor="middle" fill="#bae6fd" font-size="12" font-weight="700">Web Search Engine</text>
+      <text x="107" y="40" text-anchor="middle" fill="#38bdf8" font-size="10">Tavily API &amp; Mock Fallback</text>
+      <text x="20" y="62" fill="#cbd5e1" font-size="10">● Parallel Async Search Queries</text>
+      <text x="20" y="78" fill="#cbd5e1" font-size="10">● Raw Content Extraction</text>
+    </g>
+  </g>
+
+  <!-- ==================== FLOW ARROWS & LABELS ==================== -->
+  <!-- 1. UI to BFF -->
+  <path d="M 225 240 L 225 260" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow-cyan)"/>
+  
+  <!-- 2. BFF to FastAPI -->
+  <path d="M 280 260 L 325 140" stroke="#38bdf8" stroke-width="2" fill="none" marker-end="url(#arrow-cyan)"/>
+  
+  <!-- 3. FastAPI to Redis -->
+  <path d="M 530 190 L 530 200" stroke="#818cf8" stroke-width="2" marker-end="url(#arrow-indigo)"/>
+
+  <!-- 4. Redis to Worker -->
+  <path d="M 530 262 L 530 275" stroke="#ec4899" stroke-width="2" marker-end="url(#arrow-purple)"/>
+
+  <!-- 5. Worker to External LLM -->
+  <path d="M 742 355 L 815 355" stroke="#818cf8" stroke-width="2" marker-end="url(#arrow-indigo)"/>
+
+  <!-- 6. Worker to Search -->
+  <path d="M 742 475 L 815 475" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow-cyan)"/>
+
+  <!-- 7. Worker to PostgreSQL -->
+  <path d="M 742 200 L 815 200" stroke="#34d399" stroke-width="2" marker-end="url(#arrow-emerald)"/>
+
+  <!-- 8. Human Approval Flow Back to API -->
+  <path d="M 225 470 C 275 470, 310 320, 325 170" stroke="#fbbf24" stroke-width="2" stroke-dasharray="5 4" fill="none" marker-end="url(#arrow-amber)"/>
+
+  <!-- Flow Badges / Step Markers -->
+  <g transform="translate(290, 185)">
+    <circle cx="12" cy="12" r="11" fill="#38bdf8"/>
+    <text x="12" y="16" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="800">1</text>
+  </g>
+  <g transform="translate(260, 345)">
+    <circle cx="12" cy="12" r="11" fill="#fbbf24"/>
+    <text x="12" y="16" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="800">2</text>
+  </g>
+  <g transform="translate(537, 245)">
+    <circle cx="12" cy="12" r="11" fill="#ec4899"/>
+    <text x="12" y="16" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="800">3</text>
+  </g>
+  <g transform="translate(765, 335)">
+    <circle cx="12" cy="12" r="11" fill="#818cf8"/>
+    <text x="12" y="16" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="800">4</text>
+  </g>
+  <g transform="translate(765, 175)">
+    <circle cx="12" cy="12" r="11" fill="#34d399"/>
+    <text x="12" y="16" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="800">5</text>
+  </g>
+
+</svg>

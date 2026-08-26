@@ -38,10 +38,16 @@ def _uuid() -> str:
 
 
 def utcnow() -> datetime:
+    """Timezone-aware now(). Naive datetimes compare wrongly across DST and drivers."""
     return datetime.now(timezone.utc)
 
 
 class TaskStatus(str):
+    """The task state machine, as string constants.
+
+    Deliberately not an Enum: these values are written to a plain string column
+    and compared in SQL, and a bare str keeps queries and JSON payloads simple.
+    """
     QUEUED = "queued"
     PLANNING = "planning"
     AWAITING_APPROVAL = "awaiting_approval"
@@ -54,6 +60,7 @@ class TaskStatus(str):
 
 
 class User(Base):
+    """An account. Everything a person creates hangs off this row."""
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
@@ -67,6 +74,12 @@ class User(Base):
 
 
 class ResearchTask(Base):
+    """One research request and everything known about it.
+
+    Carries the plan awaiting approval, the finished report, the citation audit,
+    and the running cost - so a single row answers 'what happened, and what did
+    it cost'.
+    """
     __tablename__ = "research_tasks"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)

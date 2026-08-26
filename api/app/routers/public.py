@@ -14,6 +14,12 @@ router = APIRouter(prefix="/api/public", tags=["public"])
 
 @router.get("/reports/{share_id}", response_model=PublicReport)
 async def get_public_report(share_id: str, session: SessionDep) -> PublicReport:
+    """Fetch a shared report by share id.
+
+    Unauthenticated by design, so a link works for someone with no account.
+    Returns 404 rather than 403 for private or unfinished reports, so the
+    endpoint never confirms that a given share id exists.
+    """
     result = await session.scalars(
         select(ResearchTask)
         .where(
