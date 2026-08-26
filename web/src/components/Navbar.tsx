@@ -1,4 +1,9 @@
-/** Primary navigation and authenticated-session controls. */
+/**
+ * Top bar: identity and session controls.
+ *
+ * `user` is resolved by asking the API who we are, not by reading a token -
+ * the session cookie is httpOnly, so client code cannot inspect it.
+ */
 "use client";
 
 import React from "react";

@@ -1,4 +1,14 @@
-/** Safe React rendering and sharing controls for a completed research report. */
+/**
+ * The finished report, and the evidence behind it.
+ *
+ * Order matters here: the citation audit renders *above* the prose, because a
+ * reader needs to know which links were actually retrieved before they start
+ * trusting sentences built on them.
+ *
+ * The metrics bar reports real spend in dollars alongside the pre-approval
+ * estimate, which is how the estimator's heuristics get sanity-checked in
+ * practice.
+ */
 "use client";
 
 import React, { useState } from "react";

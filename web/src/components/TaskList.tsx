@@ -1,4 +1,10 @@
-/** Selectable summary list of the current user's research tasks. */
+/**
+ * Sidebar of past and in-flight research tasks.
+ *
+ * Deliberately fed by the summary endpoint rather than full task detail: this
+ * list is re-rendered on every poll tick, and pulling each task's whole event
+ * log to draw a row would make polling cost grow with history.
+ */
 "use client";
 
 import React from "react";

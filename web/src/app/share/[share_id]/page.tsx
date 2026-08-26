@@ -1,4 +1,10 @@
-/** Read-only public report view addressed by an opaque sharing capability. */
+/**
+ * Public read-only view of a shared report.
+ *
+ * Reached by share id with no account and no session. It fetches through this
+ * app's unauthenticated /api/share route rather than the proxy, since a
+ * recipient has no token to forward.
+ */
 "use client";
 
 import React, { useEffect, useState } from "react";

@@ -7,6 +7,10 @@ export const metadata: Metadata = {
   description: "A human-in-the-loop deep research agent with approval gates, live execution telemetry, source vetoes, and spend caps.",
 };
 
+/**
+ * Root layout. Dark theme is applied on <html> rather than toggled after mount,
+ * so the first paint is already dark and there is no flash of a light page.
+ */
 export default function RootLayout({
   children,
 }: Readonly<{

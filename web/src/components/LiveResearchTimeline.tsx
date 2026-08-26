@@ -1,4 +1,14 @@
-/** Polling timeline for task progress, searches, and source-veto controls. */
+/**
+ * Live view of a run in progress: what the agent searched, what it found, and
+ * the controls to intervene.
+ *
+ * Two forms of intervention live here, and both are the point of the project:
+ * cancelling mid-run (the loop checks between turns), and vetoing a source so
+ * later runs exclude it.
+ *
+ * Events arrive incrementally - the parent polls `/events?after=N` and appends -
+ * so this component only ever renders what it is given.
+ */
 "use client";
 
 import React, { useEffect, useRef } from "react";
@@ -19,6 +29,9 @@ export function LiveResearchTimeline({
 }: LiveResearchTimelineProps) {
   const eventsEndRef = useRef<HTMLDivElement>(null);
 
+  // Follow the tail as events stream in. Keyed on the count rather than the
+  // array, since the parent appends to it and a new identity every poll would
+  // re-scroll even when nothing was added.
   useEffect(() => {
     eventsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [task.events?.length]);

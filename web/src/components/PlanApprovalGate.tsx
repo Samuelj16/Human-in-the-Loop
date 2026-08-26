@@ -1,4 +1,14 @@
-/** Human review boundary for editing and approving an agent-generated plan. */
+/**
+ * The human-in-the-loop gate.
+ *
+ * The agent has drafted a plan and stopped. Nothing further is spent until the
+ * person here approves it - and because the plan is fully editable, approving
+ * is not a rubber stamp: edited steps are passed to the researcher verbatim as
+ * instructions, and the server records whether a human changed anything.
+ *
+ * The cost estimate below the plan is what turns this screen into a decision
+ * rather than a confirmation dialog. It re-prices as steps are added or removed.
+ */
 "use client";
 
 import React, { useState } from "react";
@@ -23,6 +33,8 @@ export function PlanApprovalGate({
   const [newStepText, setNewStepText] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
+  // Local edits only. Nothing is sent until Approve, so the person can rewrite
+  // the plan freely without triggering work or partial saves.
   const handleStepChange = (index: number, value: string) => {
     const updated = [...steps];
     updated[index] = value;
@@ -54,6 +66,8 @@ export function PlanApprovalGate({
   };
 
   const handleApprove = async () => {
+    // Blank steps are dropped rather than rejected - an empty row is a slip,
+    // not an instruction, and the API would refuse the whole plan for one.
     const cleanSteps = steps.map((s) => s.trim()).filter(Boolean);
     if (cleanSteps.length === 0) return;
     await onApprove(cleanSteps, answers);

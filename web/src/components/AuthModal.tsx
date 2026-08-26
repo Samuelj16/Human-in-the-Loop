@@ -1,4 +1,11 @@
-/** Login and registration dialog; credentials are submitted to same-origin routes. */
+/**
+ * Login and registration.
+ *
+ * Credentials go to this app's own route handlers, not to the API directly.
+ * Those handlers exchange them for a token and store it in an httpOnly cookie,
+ * so the token never touches client JavaScript and an XSS bug cannot steal a
+ * session. See src/lib/session.ts.
+ */
 "use client";
 
 import React, { useState } from "react";

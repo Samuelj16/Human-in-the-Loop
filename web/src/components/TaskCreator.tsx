@@ -1,4 +1,9 @@
-/** Validates and submits a new research question. */
+/**
+ * The entry point: where a research question is written.
+ *
+ * Submitting does not start any research - it starts *planning*, which stops at
+ * the approval gate. Nothing is spent until the person approves the plan there.
+ */
 "use client";
 
 import React, { useState } from "react";
@@ -20,6 +25,8 @@ export function TaskCreator({ onSubmit, loading }: TaskCreatorProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Guard against double submission: a second click while the first request
+    // is in flight would create a duplicate task, each with its own plan.
     if (!query.trim() || loading) return;
     await onSubmit(query.trim());
   };
