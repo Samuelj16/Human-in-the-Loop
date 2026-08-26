@@ -34,7 +34,14 @@ npm run dev
 cd api && .venv/bin/python -m pytest -v
 ```
 
-### 4. Build Frontend for Production
+### 4. Run Frontend Tests
+
+```bash
+cd web
+npm run test:run   # Vitest + React Testing Library, 28 tests
+```
+
+### 5. Build Frontend for Production
 
 ```bash
 cd web

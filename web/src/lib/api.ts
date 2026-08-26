@@ -126,14 +126,15 @@ export interface PublicReport {
 
 /** Custom error wrapper holding HTTP status codes from API failures */
 export class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
     super(message);
     this.name = "ApiError";
+    this.status = status;
   }
 }
+
 
 /**
  * Parse structured JSON error payloads or fall back to standard HTTP status strings.

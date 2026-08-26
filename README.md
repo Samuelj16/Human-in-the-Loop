@@ -1,5 +1,7 @@
 # Human in the Loop
 
+[![CI](https://github.com/Samuelj16/Human-in-the-Loop/actions/workflows/ci.yml/badge.svg)](https://github.com/Samuelj16/Human-in-the-Loop/actions/workflows/ci.yml)
+
 A deep-research agent that **asks permission before it spends your money**, and
 **proves its sources exist** before it hands you a report.
 
@@ -8,8 +10,13 @@ tokens unattended, and you get prose full of confident citations you have to
 check by hand. This one puts a person at the two moments that matter — before
 the spend, and after the claims.
 
-> **Live demo:** _not yet deployed — see [Deployment](#deployment) for the
-> 15-minute path to a public URL._
+> **Live demo:** **https://human-in-the-loop-samuelj16.vercel.app**
+>
+> A finished report, no sign-up required:
+> [an SSE-vs-WebSockets brief](https://hitl-api-production-64a3.up.railway.app/api/public/reports/5ee2005767234f1dbde59a44cbe6566f)
+> — 6 citations, all 6 verified against what search actually returned.
+>
+> API health: https://hitl-api-production-64a3.up.railway.app/api/health
 
 ---
 
@@ -205,20 +212,26 @@ If the agent issues duplicate search queries across iterative reasoning turns, t
 
 ## Testing
 
-**120 tests, all hermetic** — no API key, no network, no spend. The agent is
+### Backend — 131 tests (pytest)
+
+**All hermetic** — no API key, no network, no spend. The agent is
 driven by scripted fake providers, so the loop's guarantees are tested as
 properties of _our_ code rather than of a model's behaviour.
 
 ```bash
 cd api && .venv/bin/python -m pytest -q
-# 120 passed
+# 131 passed
 ```
+
+Run it from `api/` — `pytest.ini` lives there, and without it `asyncio_mode` is
+unset and every unmarked async test errors instead of running.
 
 | Suite                     | Tests | What it pins down                                                                                                                              |
 | ------------------------- | ----: | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `test_agent_loop.py`      |    21 | Spend caps (search/turn/token), cancellation mid-run, source vetoes, parallel tool execution, result ordering, memoisation, empty-report guard |
 | `test_open_model.py`      |    13 | Open-weight backends over **real HTTP** against a stub server: capability degradation, credential guard, zero-cost local pricing               |
 | `test_auth.py`            |    13 | Registration, login, account deletion cascade                                                                                                  |
+| `test_dburl.py`           |    11 | Hosted-Postgres URLs surviving contact with asyncpg (scheme coercion, sslmode)                                                                 |
 | `test_jobs_pipeline.py`   |    11 | Planning → pricing → approval, citation auditing, telemetry, and the wedged-task regressions                                                   |
 | `test_approval_gate.py`   |    10 | **Concurrent double-approval starts exactly one run**, edit detection, cursor feed, cross-user isolation                                       |
 | `test_tasks.py`           |    10 | Task lifecycle endpoints                                                                                                                       |
@@ -226,13 +239,36 @@ cd api && .venv/bin/python -m pytest -q
 | `test_pricing.py`         |     7 | Cost maths, cache discount, estimate bounds, unpriced-model flagging                                                                           |
 | `test_citations.py`       |     6 | URL normalisation, invented-citation detection                                                                                                 |
 | `test_gemini_provider.py` |     6 | Gemini adapter wire format                                                                                                                     |
-| `test_ratelimit.py`       |     4 | Sliding window, per-key isolation, window expiry                                                                                               |
 | `test_retry.py`           |     6 | Transient retried, fatal not retried, attempt accounting                                                                                       |
+| `test_ratelimit.py`       |     4 | Sliding window, per-key isolation, window expiry                                                                                               |
 | `test_public.py`          |     3 | Public report visibility rules                                                                                                                 |
 
 The tests worth reading first are `test_approval_gate.py::test_concurrent_approvals_only_start_one_run`
 and `test_jobs_pipeline.py::test_invented_citation_is_caught_and_surfaced` —
 they encode the two claims this project actually makes.
+
+
+### Frontend — 28 tests (Vitest + React Testing Library)
+
+```bash
+cd web && npm run test:run   # 28 passed
+npm run test                 # watch mode
+```
+
+| Suite                        | Tests | What it pins down                                                                                                    |
+| ---------------------------- | ----: | -------------------------------------------------------------------------------------------------------------------- |
+| `PlanApprovalGate.test.tsx`  |    12 | The gate sends the person's *edits*, not the model's draft: edit, reorder, add, delete, blank-row dropping, clarification answers, disabled while in flight |
+| `lib/api.test.ts`            |    10 | `formatUsd` sub-cent vs true zero, `errorMessage` fallbacks, `ApiError` status preservation, terminal-status set       |
+| `CitationAudit.test.tsx`     |     6 | Clean seal vs hallucination banner, and that every unverified URL reaches the DOM rather than only a count             |
+
+Vitest rather than Jest: Jest against Next 16 + React 19 needs babel/SWC
+wrangling, whereas Vitest reads the existing `tsconfig.json` paths directly.
+`CostEstimate` is stubbed in the gate's tests — what is under test is what the
+gate *submits*, not what the pricer renders.
+
+CI (`.github/workflows/ci.yml`) runs pytest, then `tsc --noEmit`, eslint,
+Vitest, and `next build`, on every push and pull request. No API keys: both
+suites are hermetic.
 
 ---
 
@@ -392,6 +428,47 @@ entropy, no placeholder words. Generate one with:
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
+### What the live demo actually runs on
+
+The deployed instance above is **Railway** (API + Postgres) and **Vercel**
+(frontend), because both drive entirely from a CLI:
+
+```bash
+railway init --name human-in-the-loop     # then: railway add --database postgres
+railway add --service hitl-api
+railway variable set PORT=8000 --service hitl-api
+railway variable set 'DATABASE_URL=${{Postgres.DATABASE_URL}}' --service hitl-api
+cd api && railway up                      # builds api/Dockerfile remotely
+railway domain --port 8000                # public URL, target port must match
+
+cd ../web && vercel link && vercel deploy --prod
+vercel env add API_URL production         # = the Railway URL
+```
+
+Two things will cost you an afternoon if nobody warns you:
+
+**Railway does not run `startCommand` through a shell.** It splits the string
+into argv itself, so `&&`, `;` and `${PORT:-8000}` are passed as *literal
+arguments*. A `startCommand` of `alembic upgrade head && uvicorn ...` runs
+alembic with `&&` and `uvicorn` as stray positional args, alembic exits 0, and
+the container stops — with migrations applied and no web server, which looks
+exactly like a hung app. `${PORT:-8000}` fails louder:
+`error: argument port: invalid int value: '${PORT:-8000}'`.
+
+The fix is to *not* set `startCommand` at all. [`api/Dockerfile`](api/Dockerfile)'s
+`CMD` is already exec-form `sh -c`, which is a real shell and handles both. That
+is why [`api/railway.json`](api/railway.json) declares only the builder and the
+healthcheck.
+
+**Railway does not inject `PORT` on its own here**, so set it explicitly and
+give the domain the same target port. Unset, `--port $PORT` becomes an empty
+argument and uvicorn dies on startup.
+
+Debugging note: `railway logs` defaults to *the most recent successful
+deployment*, not the one that just failed. While you are iterating on a broken
+boot that means it happily shows you stale logs from a previous deploy. Pass the
+deployment id explicitly — `railway logs <id> --deployment --lines 200`.
+
 ### The $0 path (no card, nothing expires)
 
 Three free tiers, chosen so nothing lapses under you:
@@ -430,16 +507,19 @@ Skip Redis and the worker. With `REDIS_URL` unset, jobs run inside the API
 process — verified booting in production mode against Postgres:
 
 ```json
-{"status":"ok","environment":"production","provider":"groq","queue":"in-process"}
+{"status":"ok","environment":"production","provider":"gemini","queue":"in-process","search":"tavily"}
 ```
+
+That is the live deployment's actual `/api/health`, not an illustration.
 
 The trade-off is honest and small for a demo: a redeploy *during* a run orphans
 that task, and the reaper fails it cleanly within 15 minutes rather than leaving
 it spinning. Add Redis and the worker service when that matters.
 
 1. **Railway → Deploy from GitHub repo**, root directory `api`.
-2. **Add PostgreSQL.** Set `DATABASE_URL` to Railway's value with the
-   `postgresql://` prefix swapped for `postgresql+asyncpg://`.
+2. **Add PostgreSQL.** Set `DATABASE_URL` to `${{Postgres.DATABASE_URL}}` and
+   leave the string alone — [`app/dburl.py`](api/app/dburl.py) adds the
+   `+asyncpg` driver and strips the libpq-only parameters at boot.
 3. Set `JWT_SECRET`, `AUTO_CREATE_SCHEMA=false`, your model key, and
    `CORS_ORIGINS` (fill in after step 5).
 4. **Vercel → Import repo**, root directory `web`, one variable: `API_URL` =

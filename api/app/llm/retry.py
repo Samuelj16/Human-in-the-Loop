@@ -21,6 +21,7 @@ import random
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
+from app.config import settings
 from app.llm.base import LLMTransientError
 
 log = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ SERVER_DELAY_CAP_SECONDS = 65.0
 async def with_retry(
     operation: Callable[[], Awaitable[T]],
     *,
-    max_attempts: int = MAX_ATTEMPTS,
+    max_attempts: int | None = None,
     label: str = "llm call",
 ) -> tuple[T, int]:
     """Run `operation`, retrying transient failures with jittered exponential backoff.
@@ -60,6 +61,9 @@ async def with_retry(
     Raises:
         LLMTransientError: If all retry attempts fail.
     """
+    if max_attempts is None:
+        max_attempts = settings.llm_max_retry_attempts or MAX_ATTEMPTS
+
     last: LLMTransientError | None = None
 
     for attempt in range(1, max_attempts + 1):

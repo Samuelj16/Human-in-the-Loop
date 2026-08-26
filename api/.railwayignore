@@ -1,0 +1,12 @@
+# Railway uploads the build context from this directory. .gitignore is honoured
+# too, but secrets and the 211MB virtualenv are worth excluding explicitly
+# rather than relying on that.
+.venv/
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.pytest_cache/
+*.db
+.DS_Store

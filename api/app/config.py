@@ -100,6 +100,11 @@ class Settings(BaseSettings):
     open_model_price_input: float = 0.0
     open_model_price_output: float = 0.0
 
+    # How many times a transient provider failure is retried. Free tiers with a
+    # tight per-minute quota (Gemini allows 5) need more patience than a paid
+    # key, because a multi-turn run legitimately trips the limit mid-way.
+    llm_max_retry_attempts: int = 4
+
     # --- Search Engine Integration -----------------------------------------
     # Tavily API key for live web search queries. If unset, falls back to offline stub search.
     tavily_api_key: str | None = None
