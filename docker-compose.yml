@@ -1,0 +1,60 @@
+# Full local stack: Postgres, Redis, the API, the background worker, and the web app.
+# Without this, `REDIS_URL` stays unset and jobs run in-process (fine for a laptop,
+# not for anything that has to survive a restart).
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hitl
+      POSTGRES_PASSWORD: hitl
+      POSTGRES_DB: hitl
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hitl"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: ./api
+    environment: &backend_env
+      DATABASE_URL: postgresql+asyncpg://hitl:hitl@db:5432/hitl
+      REDIS_URL: redis://redis:6379
+      AUTO_CREATE_SCHEMA: "false"
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      CORS_ORIGINS: http://localhost:3000
+    ports: ["8000:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  worker:
+    build: ./api
+    environment: *backend_env
+    # The API container runs migrations; the worker just consumes jobs.
+    command: arq app.worker.WorkerSettings
+    depends_on:
+      api: {condition: service_started}
+
+  web:
+    build: ./web
+    environment:
+      # Server-side only: the browser never talks to the API directly.
+      API_URL: http://api:8000
+    ports: ["3000:3000"]
+    depends_on: [api]
+
+volumes:
+  pgdata:
