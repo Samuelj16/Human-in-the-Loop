@@ -10,7 +10,7 @@ tokens unattended, and you get prose full of confident citations you have to
 check by hand. This one puts a person at the two moments that matter — before
 the spend, and after the claims.
 
-> **Live demo:** **https://human-in-the-loop-samuelj16.vercel.app**
+> **Live demo:** **https://human-in-the-loop-five.vercel.app**
 >
 > A finished report, no sign-up required:
 > [an SSE-vs-WebSockets brief](https://hitl-api-production-64a3.up.railway.app/api/public/reports/5ee2005767234f1dbde59a44cbe6566f)
