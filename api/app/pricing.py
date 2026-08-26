@@ -1,8 +1,18 @@
-"""Token accounting in dollars.
+"""Token accounting in dollars and pre-flight cost estimation.
 
 The approval gate is only a real decision if the person can see what they are
 about to spend, so every estimate and every actual is denominated in USD rather
 than tokens. Prices are per 1M tokens.
+
+Key Concepts:
+  - Cache Multipliers: Anthropic prompt caching charges 1.25x input rate to write
+    to the 5-minute ephemeral cache, but only 0.10x input rate to read back.
+  - Triangular Transcript Growth: In multi-turn tool loops, the full transcript
+    is resent on every turn. Without caching, input tokens grow triangularly:
+    (turn 1) + (turn 1 + 2) + ... Prompt caching flattens this so only fresh
+    deltas incur the full input price.
+  - Heuristic Calibration: Pre-flight estimates calculate expected, low, and high
+    ranges based on planned steps, max search caps, and tool turn limits.
 """
 from __future__ import annotations
 
@@ -49,6 +59,12 @@ def _configured_open_model_price(model: str) -> tuple[float, float] | None:
     A model on your own hardware costs nothing per token, so the 0.0 default is
     not a missing value - it is the right answer, and the approval gate should
     show $0.00 rather than a guess.
+    
+    Args:
+        model: Model identifier name.
+        
+    Returns:
+        tuple[float, float] | None: (input $/Mtok, output $/Mtok) if model matches open_model_name, else None.
     """
     from app.config import settings
 
@@ -62,6 +78,12 @@ def price_for(model: str) -> tuple[float, float]:
 
     Falls back to a configurable guess for models we have no published price for;
     callers should check `is_priced` before presenting a figure as fact.
+    
+    Args:
+        model: Model identifier string.
+        
+    Returns:
+        tuple[float, float]: (input_price_per_million, output_price_per_million) in USD.
     """
     if model in PRICES:
         return PRICES[model]
@@ -72,7 +94,16 @@ def price_for(model: str) -> tuple[float, float]:
 
 
 def is_priced(model: str) -> bool:
-    """False when we are guessing, so the UI can say so."""
+    """Check whether a model has verified pricing configured.
+    
+    Returns False when we are guessing, so the UI can notify the user.
+    
+    Args:
+        model: Model identifier string.
+        
+    Returns:
+        bool: True if model is in hardcoded list or explicitly configured via open_model_price.
+    """
     return model in PRICES or _configured_open_model_price(model) is not None
 
 
@@ -83,7 +114,20 @@ def cost_usd(
     cache_read_tokens: int = 0,
     cache_write_tokens: int = 0,
 ) -> float:
-    """Dollar cost of one call (or a whole task, summed)."""
+    """Calculate the dollar cost of one call (or a whole task, summed).
+    
+    Applies standard input/output pricing per 1M tokens along with cache multipliers.
+    
+    Args:
+        model: Model identifier.
+        input_tokens: Number of fresh un-cached input tokens.
+        output_tokens: Number of completion tokens generated.
+        cache_read_tokens: Number of tokens read from ephemeral cache.
+        cache_write_tokens: Number of tokens written to ephemeral cache.
+        
+    Returns:
+        float: Calculated dollar cost rounded to 6 decimal places.
+    """
     in_price, out_price = price_for(model)
     total = (
         input_tokens * in_price
@@ -95,7 +139,7 @@ def cost_usd(
 
 
 # --------------------------------------------------------------------------
-# Pre-flight estimate, shown on the approval gate
+# Pre-flight estimate heuristics (shown on the approval gate)
 # --------------------------------------------------------------------------
 # Heuristics, deliberately explicit so they can be recalibrated against the
 # `llm_turns` telemetry once real runs exist.
@@ -139,6 +183,15 @@ def _run_cost(
     Input grows every turn because the transcript is resent, so the input bill
     is a triangular number, not turns x prompt. That growth is exactly what
     prompt caching flattens, which is why `cached` matters so much here.
+    
+    Args:
+        model: Model identifier.
+        turns: Projected total LLM invocations.
+        searches: Projected web search tool calls.
+        cached: Whether prompt caching is active.
+        
+    Returns:
+        float: Simulated cumulative dollar cost.
     """
     total = 0.0
     transcript = 0  # tokens accumulated in the conversation so far
@@ -179,6 +232,18 @@ def estimate_task_cost(
 
     Expected: roughly one search per step plus a synthesis turn.
     High: the plan runs into the hard caps.
+    Low: fast convergence with minimal searches.
+    
+    Args:
+        plan: List of research steps in the proposed plan.
+        model: Target LLM model name.
+        max_searches: Hard search limit safeguard.
+        max_iterations: Hard turn limit safeguard.
+        include_planner: Whether to add drafting cost to the total.
+        cached: Whether prompt caching is assumed.
+        
+    Returns:
+        CostEstimate: Structured cost estimate with expected, low, and high bounds.
     """
     steps = max(1, len(plan))
     expected_searches = min(max_searches, steps + 1)
@@ -205,3 +270,4 @@ def estimate_task_cost(
         expected_turns=expected_turns,
         priced=is_priced(model),
     )
+

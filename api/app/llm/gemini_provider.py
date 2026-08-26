@@ -2,6 +2,12 @@
 
 Uses the official OpenAI SDK pointing to Google's Generative Language API endpoint:
 https://generativelanguage.googleapis.com/v1beta/openai/
+
+Features:
+  - Connects to Google AI Studio with OpenAI SDK syntax.
+  - Implements chat completions wire format with tool call parsing.
+  - Supports strict schema-constrained JSON output for planning.
+  - Automatically isolates cached tokens from prompt tokens for accurate billing telemetry.
 """
 from __future__ import annotations
 
@@ -35,6 +41,12 @@ class GeminiProvider(LLMProvider):
     name = "gemini"
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
+        """Initialize the Gemini client using Google's OpenAI-compatible endpoint.
+        
+        Args:
+            api_key: Optional explicit API key override. Defaults to settings.gemini_api_key.
+            model: Optional model override. Defaults to settings.gemini_model.
+        """
         self.model = model or settings.gemini_model
         resolved_key = (api_key or settings.gemini_api_key) or None
         self._client = openai.AsyncOpenAI(
@@ -43,6 +55,7 @@ class GeminiProvider(LLMProvider):
         )
 
     def _to_wire(self, system: str, messages: list[Message]) -> list[dict[str, Any]]:
+        """Translate neutral messages to OpenAI-compatible wire messages."""
         wire: list[dict[str, Any]] = [{"role": "system", "content": system}]
         for msg in messages:
             if msg.role == "user":
@@ -77,6 +90,7 @@ class GeminiProvider(LLMProvider):
 
     @staticmethod
     def _tools_to_wire(tools: list[ToolSpec] | None) -> list[dict[str, Any]]:
+        """Translate ToolSpec list to OpenAI-style tool schema definitions."""
         return [
             {
                 "type": "function",
@@ -91,6 +105,7 @@ class GeminiProvider(LLMProvider):
 
     @staticmethod
     def _usage(response: Any) -> Usage:
+        """Extract token usage metrics and cache reads from response payload."""
         usage = getattr(response, "usage", None)
         if not usage:
             return Usage()
@@ -194,6 +209,7 @@ class GeminiProvider(LLMProvider):
         )
 
     async def _create(self, kwargs: dict[str, Any]):
+        """Send chat completion request with mapped error handling."""
         try:
             return await self._client.chat.completions.create(**kwargs)
         except openai.AuthenticationError as exc:
@@ -210,4 +226,5 @@ class GeminiProvider(LLMProvider):
                     f"Gemini server error {exc.status_code}: {exc}"
                 ) from exc
             raise LLMError(f"Gemini API error {exc.status_code}: {exc}") from exc
+
 

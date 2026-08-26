@@ -1,4 +1,15 @@
-"""Shared retry policy for transient provider failures."""
+"""Shared retry policy for transient provider failures.
+
+Handles exponential backoff with full random jitter to mitigate thundering herds
+when remote model APIs experience rate limits, transient overload (HTTP 529/503),
+or dropped connections.
+
+Key Features:
+  - Caps maximum retry attempts (`MAX_ATTEMPTS = 4`).
+  - Bounds retry delay to `MAX_DELAY_SECONDS = 20.0`.
+  - Injects randomized multiplicative jitter (0.5x to 1.5x).
+  - Returns total attempts along with the result for turn-level telemetry logging.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -13,8 +24,11 @@ log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+# Maximum retry attempts before giving up and failing the turn
 MAX_ATTEMPTS = 4
+# Base exponential backoff factor in seconds
 BASE_DELAY_SECONDS = 1.0
+# Upper bound cap on backoff sleep duration
 MAX_DELAY_SECONDS = 20.0
 
 
@@ -24,10 +38,21 @@ async def with_retry(
     max_attempts: int = MAX_ATTEMPTS,
     label: str = "llm call",
 ) -> tuple[T, int]:
-    """Run `operation`, retrying transient failures with jittered backoff.
+    """Run `operation`, retrying transient failures with jittered exponential backoff.
 
     Returns the result and how many attempts it took, so the attempt count can
     be recorded as telemetry rather than vanishing into a log line.
+    
+    Args:
+        operation: Async callable returning a value.
+        max_attempts: Maximum attempts before raising.
+        label: Context string for log warning messages.
+        
+    Returns:
+        tuple[T, int]: Result value and total attempt count (1..max_attempts).
+        
+    Raises:
+        LLMTransientError: If all retry attempts fail.
     """
     last: LLMTransientError | None = None
 
@@ -38,6 +63,7 @@ async def with_retry(
             last = exc
             if attempt == max_attempts:
                 break
+            # Calculate exponential backoff with jitter
             delay = min(BASE_DELAY_SECONDS * 2 ** (attempt - 1), MAX_DELAY_SECONDS)
             delay *= 0.5 + random.random()  # jitter: avoid a retry thundering herd
             log.warning(
@@ -49,3 +75,4 @@ async def with_retry(
     raise LLMTransientError(
         f"{label} failed after {max_attempts} attempts: {last}"
     ) from last
+

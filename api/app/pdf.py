@@ -1,14 +1,20 @@
-"""Markdown report -> PDF.
+"""Markdown report to PDF rendering module.
 
 WeasyPrint rather than ReportLab (the report is already Markdown, so laying it
 out by hand is wasted work) and rather than Puppeteer (no headless Chrome to
 ship in the API container). WeasyPrint needs Pango/Cairo present, so the import
 is deferred and its absence degrades to a clear 503 instead of a boot failure.
+
+Architecture:
+  - Markdown Parsing: Converts Markdown text with extensions (`extra`, `sane_lists`, `toc`, `nl2br`).
+  - HTML Packaging: Injects print-optimized typography CSS (A4 page sizing, running page numbers, table formatting).
+  - Lazy WeasyPrint Loading: Cached module loader prevents application crash on systems without Cairo/Pango.
 """
 from __future__ import annotations
 
 from functools import lru_cache
 
+# Clean, professional print-media stylesheet for generated research PDFs
 STYLESHEET = """
 @page { size: A4; margin: 20mm 18mm; @bottom-center { content: counter(page); font-size: 9pt; color: #666; } }
 body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 10.5pt; line-height: 1.55; color: #1a1a1a; }
@@ -27,10 +33,19 @@ th, td { border: 1px solid #ddd; padding: 4pt 6pt; text-align: left; }
 
 class PDFUnavailable(RuntimeError):
     """WeasyPrint (or its system libraries) is not installed in this image."""
+    pass
 
 
 @lru_cache
 def _weasyprint():
+    """Lazily load the WeasyPrint library and verify underlying C libraries.
+    
+    Returns:
+        The imported weasyprint module.
+        
+    Raises:
+        PDFUnavailable: If weasyprint or system Cairo/Pango binaries are missing.
+    """
     try:
         import weasyprint  # noqa: PLC0415
     except (ImportError, OSError) as exc:  # OSError = missing Pango/Cairo
@@ -42,7 +57,14 @@ def _weasyprint():
 
 
 def markdown_to_html(md_text: str) -> str:
-    """Render report Markdown to HTML for the PDF pass."""
+    """Render report Markdown to HTML for the PDF pass.
+    
+    Args:
+        md_text: Raw Markdown string.
+        
+    Returns:
+        str: Rendered HTML markup.
+    """
     import markdown  # noqa: PLC0415
 
     return markdown.markdown(
@@ -55,6 +77,13 @@ def render_report_pdf(query: str, report_markdown: str) -> bytes:
 
     Raises PDFUnavailable rather than crashing the process when the system
     libraries are missing, so PDF export degrades to a 503.
+    
+    Args:
+        query: Original research inquiry for the document metadata header.
+        report_markdown: Full Markdown text of the completed report.
+        
+    Returns:
+        bytes: Binary PDF file content.
     """
     weasyprint = _weasyprint()
     html = f"""<!doctype html><html><head><meta charset="utf-8">
@@ -66,6 +95,15 @@ def render_report_pdf(query: str, report_markdown: str) -> bytes:
 
 
 def _escape(text: str) -> str:
+    """Escape basic HTML special characters in header strings.
+    
+    Args:
+        text: Input string.
+        
+    Returns:
+        str: HTML-safe string.
+    """
     return (
         text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     )
+

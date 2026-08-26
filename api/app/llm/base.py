@@ -1,10 +1,17 @@
-"""Provider-neutral LLM interface.
+"""Provider-neutral LLM interface and data models.
 
 The agent loop in `app/agent/loop.py` is written against these types only, so
 swapping Claude for GPT is a config change rather than a rewrite. Anything a
 provider needs that does not fit the neutral shape (Anthropic thinking blocks,
 for example) rides along opaquely in `Message.provider_raw` and is only ever
 read back by the provider that produced it.
+
+Classes & Data Types:
+  - Error Hierarchy: `LLMError`, `LLMRefusal`, `LLMTransientError`.
+  - Tool Representations: `ToolSpec`, `ToolCall`.
+  - Token Accounting: `Usage` tracking input, output, cache-read, and cache-write tokens.
+  - Neutral Conversation Structure: `Message`, `LLMResponse`.
+  - Abstract Adapter Base: `LLMProvider`.
 """
 from __future__ import annotations
 
@@ -15,10 +22,12 @@ from typing import Any, Literal
 
 class LLMError(RuntimeError):
     """Any provider failure the agent loop should surface rather than retry."""
+    pass
 
 
 class LLMRefusal(LLMError):
     """The model declined the request (Claude `stop_reason: "refusal"`)."""
+    pass
 
 
 class LLMTransientError(LLMError):
@@ -27,6 +36,7 @@ class LLMTransientError(LLMError):
     A twelve-turn research run gets twelve chances to hit one of these, so
     treating them as fatal throws away most of a task's work.
     """
+    pass
 
 
 @dataclass(frozen=True)
@@ -35,20 +45,20 @@ class ToolSpec:
 
     Provider-neutral; each adapter translates this into its own wire format.
     """
-    name: str
-    description: str
-    input_schema: dict[str, Any]
+    name: str                           # Unique function/tool name
+    description: str                    # Explanatory description guide for model tool selection
+    input_schema: dict[str, Any]        # JSON Schema defining expected input parameter properties
 
 
 @dataclass(frozen=True)
 class ToolCall:
-    """One tool invocation the model asked for.
+    """One tool invocation requested by the model.
 
     `id` must be echoed back on the matching result, or the conversation breaks.
     """
-    id: str
-    name: str
-    arguments: dict[str, Any]
+    id: str                             # Unique tool invocation identifier
+    name: str                           # Name of the tool called
+    arguments: dict[str, Any]           # Parsed argument dictionary
 
 
 @dataclass(frozen=True)
@@ -58,14 +68,13 @@ class Usage:
     Cached input is tracked separately because it bills at a fraction of fresh
     input - folding them together would make cost reporting silently wrong.
     """
-    input_tokens: int = 0
-    output_tokens: int = 0
-    # Split out because cached input is billed at a tenth of fresh input;
-    # folding them together would make cost reporting wrong.
-    cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
+    input_tokens: int = 0               # Fresh un-cached input prompt tokens
+    output_tokens: int = 0              # Completion/output tokens generated
+    cache_read_tokens: int = 0          # Tokens read from ephemeral prompt cache
+    cache_write_tokens: int = 0         # Tokens written to ephemeral prompt cache
 
     def __add__(self, other: "Usage") -> "Usage":
+        """Combine token usages across multiple turns."""
         return Usage(
             self.input_tokens + other.input_tokens,
             self.output_tokens + other.output_tokens,
@@ -122,12 +131,26 @@ class LLMResponse:
 
 
 def user_message(text: str) -> Message:
-    """Build a user turn."""
+    """Build a standard user turn.
+    
+    Args:
+        text: Prompt text.
+        
+    Returns:
+        Message: User message turn.
+    """
     return Message(role="user", content=text)
 
 
 def assistant_message(text: str) -> Message:
-    """Build an assistant turn with no tool calls."""
+    """Build an assistant turn with no tool calls.
+    
+    Args:
+        text: Assistant completion text.
+        
+    Returns:
+        Message: Assistant message turn.
+    """
     return Message(role="assistant", content=text)
 
 
@@ -138,6 +161,14 @@ def tool_result_message(
 
     `is_error` tells the model the tool failed, which lets it recover instead of
     treating the error text as data.
+    
+    Args:
+        call: The tool call being answered.
+        content: Stringified result or error message.
+        is_error: Whether the tool execution resulted in an error.
+        
+    Returns:
+        Message: Tool result message turn.
     """
     return Message(
         role="tool",
@@ -163,8 +194,18 @@ class LLMProvider(abc.ABC):
         max_tokens: int = 8000,
         cache_prefix: bool = False,
     ) -> LLMResponse:
-        """One turn. `cache_prefix` marks the stable system+tools prefix as
-        cacheable - worth it whenever the same prefix is resent across turns."""
+        """Execute one conversational turn.
+        
+        Args:
+            system: System prompt instructions.
+            messages: Neutral message history list.
+            tools: Optional tool schemas available to model.
+            max_tokens: Maximum tokens permitted in completion.
+            cache_prefix: If True, marks system & tool prefix as cacheable.
+            
+        Returns:
+            LLMResponse: Provider response and telemetry.
+        """
 
     @abc.abstractmethod
     async def complete_json(
@@ -175,7 +216,17 @@ class LLMProvider(abc.ABC):
         schema: dict[str, Any],
         max_tokens: int = 2000,
     ) -> tuple[dict[str, Any], LLMResponse]:
-        """A turn constrained to `schema`, so no output parsing is needed."""
+        """Execute a turn constrained strictly to a JSON schema.
+        
+        Args:
+            system: System prompt instructions.
+            messages: Neutral message history list.
+            schema: JSON Schema definition.
+            max_tokens: Maximum tokens permitted in completion.
+            
+        Returns:
+            tuple[dict[str, Any], LLMResponse]: Parsed JSON data and the raw turn response.
+        """
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
@@ -184,6 +235,15 @@ def extract_json_object(text: str) -> dict[str, Any]:
     Needed for backends without constrained decoding - many open-weight servers
     support `json_object` but not a full JSON schema, and some support neither,
     so the last resort is parsing what the model wrote.
+    
+    Args:
+        text: Raw text string from model output.
+        
+    Returns:
+        dict[str, Any]: Parsed JSON object.
+        
+    Raises:
+        LLMError: If no valid JSON dictionary can be extracted.
     """
     import json
     import re
@@ -202,3 +262,4 @@ def extract_json_object(text: str) -> dict[str, Any]:
             pass
 
     raise LLMError("Model did not return usable JSON.")
+

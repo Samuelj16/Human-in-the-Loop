@@ -51,6 +51,12 @@ class AnthropicProvider(LLMProvider):
     name = "anthropic"
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
+        """Initialize the Anthropic client.
+        
+        Args:
+            api_key: Optional explicit API key override.
+            model: Optional model name override. Defaults to settings.anthropic_model.
+        """
         self.model = model or settings.anthropic_model
         # An empty string must become None, or it overrides the SDK's own
         # credential resolution (env var, `ant auth login` profile) and the
@@ -62,10 +68,16 @@ class AnthropicProvider(LLMProvider):
 
     # -- wire format -------------------------------------------------------
     def _to_wire(self, messages: list[Message]) -> list[dict[str, Any]]:
-        """Neutral messages -> Anthropic messages.
+        """Neutral messages -> Anthropic messages wire format.
 
         Consecutive tool results must be collapsed into a *single* user message;
         splitting them trains the model out of parallel tool calls.
+        
+        Args:
+            messages: List of neutral Message instances.
+            
+        Returns:
+            list[dict[str, Any]]: Anthropic API messages payload.
         """
         wire: list[dict[str, Any]] = []
         pending_results: list[dict[str, Any]] = []
@@ -118,6 +130,7 @@ class AnthropicProvider(LLMProvider):
 
     @staticmethod
     def _tools_to_wire(tools: list[ToolSpec] | None) -> list[dict[str, Any]]:
+        """Translate neutral ToolSpecs to Anthropic tools array."""
         return [
             {
                 "name": t.name,
@@ -129,6 +142,7 @@ class AnthropicProvider(LLMProvider):
 
     @staticmethod
     def _system_to_wire(system: str, cache_prefix: bool) -> Any:
+        """Format system prompt with optional ephemeral cache control."""
         if not cache_prefix:
             return system
         # Render order is tools -> system -> messages, so a breakpoint at the
@@ -137,6 +151,7 @@ class AnthropicProvider(LLMProvider):
 
     @staticmethod
     def _usage(response: Any) -> Usage:
+        """Extract token usage and cache metrics from Anthropic response object."""
         usage = response.usage
         return Usage(
             input_tokens=getattr(usage, "input_tokens", 0) or 0,
@@ -146,6 +161,7 @@ class AnthropicProvider(LLMProvider):
         )
 
     def _check_refusal(self, response: Any) -> None:
+        """Check for model refusal and raise LLMRefusal if request was rejected."""
         if response.stop_reason == "refusal":
             detail = getattr(response, "stop_details", None)
             raise LLMRefusal(
@@ -287,3 +303,4 @@ class AnthropicProvider(LLMProvider):
                     f"Anthropic server error {exc.status_code}: {exc}"
                 ) from exc
             raise LLMError(f"Anthropic API error {exc.status_code}: {exc}") from exc
+

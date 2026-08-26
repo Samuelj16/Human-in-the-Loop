@@ -1,5 +1,16 @@
-"""Prompts for the two agent phases."""
+"""System and user prompts for the two agent execution phases.
 
+Prompts:
+  1. `PLANNER_SYSTEM`: Constrains the planner model to output a structured JSON
+     schema containing restated question, 0-3 clarifying questions, and 3-6 action steps.
+  2. `RESEARCHER_SYSTEM`: System prompt injected into the research loop turn containing
+     the query, user clarification answers, approved plan, tool usage guidelines, and
+     required report structure.
+  3. `FINALISE_NUDGE`: Injected when the task exhausts search/turn budget to force
+     immediate synthesis of a final report from already gathered evidence.
+"""
+
+# System prompt for Phase 1: Planning and formulation of clarifying questions
 PLANNER_SYSTEM = """\
 You are the planning half of a research assistant. A person has asked a \
 research question. Before any searching happens, you draft a short plan that \
@@ -20,6 +31,7 @@ Return ONLY a JSON object, no prose and no code fences, with exactly these keys:
 Keep every string under 140 characters."""
 
 
+# System prompt template for Phase 2: Autonomous web research with tool calls
 RESEARCHER_SYSTEM = """\
 You are the research half of a research assistant, working on behalf of a \
 person who has already reviewed and approved your plan. Follow their plan - \
@@ -53,8 +65,10 @@ Reference sources inline as [1], [2] matching that list. Write for a smart
 reader who is not an expert in this topic. Do not pad."""
 
 
+# Emergency wrap-up prompt injected when spend or turn budget is exhausted
 FINALISE_NUDGE = """\
 Your research budget is spent ({reason}). Do not call any more tools. Write the \
 final Markdown report now using only the evidence you have already gathered, \
 and be explicit in the Limitations section about what the truncated research \
 means for your confidence."""
+

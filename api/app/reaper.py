@@ -1,10 +1,20 @@
-"""Rescue tasks whose worker died.
+"""Rescue tasks whose worker died and purge expired task history.
 
 A research run can take minutes. If the process handling it is redeployed,
 OOM-killed, or (in in-process mode) simply restarted, the row stays in
 `researching` forever and the UI spins with nothing behind it. The worker
 heartbeats while it is alive; anything running with a stale heartbeat has been
 orphaned and is failed with an honest message.
+
+Components:
+  - Orphan Reaper (`reap_stale_tasks`): Identifies active tasks in running states
+    (`planning`, `researching`, `queued`) whose `heartbeat_at` or `updated_at` exceeds
+    the 15-minute threshold and transitions them to `failed`.
+  - In-Process Background Sweeper (`reaper_loop`): Continuous asyncio loop run in
+    standalone API mode when no external Arq cron worker is available.
+  - Data Retention Purger (`purge_expired_tasks`): Hard deletes tasks older than
+    `settings.data_retention_days`, triggering database cascading deletes on events,
+    sources, and LLM turns.
 """
 from __future__ import annotations
 
@@ -19,10 +29,14 @@ from app.models import ResearchTask, TaskEvent, TaskStatus, utcnow
 
 log = logging.getLogger(__name__)
 
+# Task states considered active and monitored by the heartbeat reaper
 RUNNING_STATES = (TaskStatus.PLANNING, TaskStatus.RESEARCHING, TaskStatus.QUEUED)
+# Maximum duration without a heartbeat before a task is considered orphaned
 STALE_AFTER = timedelta(minutes=15)
+# In-process periodic sweep interval
 SWEEP_INTERVAL_SECONDS = 300
 
+# User-facing failure explanation attached to reaped tasks
 ORPHANED_MESSAGE = (
     "This run was interrupted - the worker handling it stopped responding "
     "(most likely a restart or deploy). Nothing further was charged. "
@@ -31,7 +45,14 @@ ORPHANED_MESSAGE = (
 
 
 async def reap_stale_tasks(stale_after: timedelta = STALE_AFTER) -> int:
-    """Fail orphaned tasks. Returns how many were reaped."""
+    """Fail orphaned tasks. Returns how many were reaped.
+    
+    Args:
+        stale_after: Inactivity threshold duration before declaring task dead.
+        
+    Returns:
+        int: Number of orphaned tasks marked FAILED.
+    """
     cutoff = utcnow() - stale_after
 
     async with SessionLocal() as session:
@@ -67,7 +88,11 @@ async def reap_stale_tasks(stale_after: timedelta = STALE_AFTER) -> int:
 
 
 async def reaper_loop(interval_seconds: int = SWEEP_INTERVAL_SECONDS) -> None:
-    """Background sweep, used when there is no arq worker to run it on a cron."""
+    """Background sweep loop, used when there is no arq worker to run it on a cron.
+    
+    Args:
+        interval_seconds: Sleep duration between consecutive sweeps.
+    """
     while True:
         try:
             reaped = await reap_stale_tasks()
@@ -81,7 +106,14 @@ async def reaper_loop(interval_seconds: int = SWEEP_INTERVAL_SECONDS) -> None:
 
 
 async def reap_job(ctx: dict | None = None) -> int:
-    """arq entrypoint."""
+    """arq cron worker entrypoint for reaping stale tasks.
+    
+    Args:
+        ctx: Optional worker context.
+        
+    Returns:
+        int: Count of reaped tasks.
+    """
     return await reap_stale_tasks()
 
 
@@ -94,6 +126,12 @@ async def purge_expired_tasks(retention_days: int | None = None) -> int:
     Events, sources, and turns go with them via ON DELETE CASCADE. A retention
     of 0 means "keep forever", which is a legitimate choice - but it should be a
     stated one, not an accident.
+    
+    Args:
+        retention_days: Number of days to retain tasks. If None, uses settings.data_retention_days.
+        
+    Returns:
+        int: Number of deleted task records.
     """
     from app.config import settings
 
@@ -121,5 +159,13 @@ async def purge_expired_tasks(retention_days: int | None = None) -> int:
 
 
 async def retention_job(ctx: dict | None = None) -> int:
-    """arq entrypoint."""
+    """arq cron worker entrypoint for purging expired tasks.
+    
+    Args:
+        ctx: Optional worker context.
+        
+    Returns:
+        int: Count of purged tasks.
+    """
     return await purge_expired_tasks()
+

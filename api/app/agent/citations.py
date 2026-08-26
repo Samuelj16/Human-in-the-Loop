@@ -1,11 +1,16 @@
-"""Check a finished report's citations against what was actually retrieved.
+"""Citation verification and ledger auditing engine.
 
 The agent keeps a ledger of every URL a search really returned (the `sources`
 table). A report is only trustworthy to the extent its citations appear in that
 ledger. Anything cited but never retrieved is, by definition, a URL the model
 produced from memory - exactly the failure this project exists to make visible.
 
-This is a mechanism, not a prompt instruction, which is why it can be trusted.
+Key Algorithms:
+  - `normalize_url`: Strips trailing punctuation, www prefixes, default ports (80/443),
+    and common tracking query parameters (`utm_*`, `fbclid`, `gclid`).
+  - `extract_urls`: Regex-based extraction of Markdown links and plain HTTP/HTTPS URLs.
+  - `audit_citations`: Partitions cited links into verified (in ledger) vs unverified (hallucinated),
+    and identifies retrieved sources that went unused in the text.
 """
 from __future__ import annotations
 
@@ -13,13 +18,28 @@ import re
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit, urlunsplit
 
-# Markdown links, angle-bracket links, and bare URLs.
+# Regex for Markdown links, angle-bracket links, and bare URLs.
 _URL_RE = re.compile(r"https?://[^\s\)\]\>\"'`,]+", re.IGNORECASE)
+# Query parameters removed during canonicalization to ensure robust URL equality
 _TRACKING_PARAMS = ("utm_", "fbclid", "gclid", "mc_cid", "mc_eid", "ref_src")
 
 
 def normalize_url(url: str) -> str:
-    """Fold away differences that do not change what page was read."""
+    """Fold away URL differences that do not change what page was read.
+    
+    Performs canonicalization:
+      - Trims trailing sentence punctuation.
+      - Lowercases hostname and scheme.
+      - Removes leading 'www.' prefix.
+      - Strips standard default ports (80 for http, 443 for https).
+      - Drops common marketing/tracking query parameters (utm_*, gclid, etc.).
+      
+    Args:
+        url: Raw URL string.
+        
+    Returns:
+        str: Normalized, canonical URL.
+    """
     url = url.strip().rstrip(".,;:!?")
     try:
         parts = urlsplit(url)
@@ -44,7 +64,14 @@ def normalize_url(url: str) -> str:
 
 
 def extract_urls(markdown: str) -> list[str]:
-    """Every URL the report points at, in order, de-duplicated."""
+    """Extract every unique URL referenced in the report Markdown, preserving appearance order.
+    
+    Args:
+        markdown: The full report Markdown text.
+        
+    Returns:
+        list[str]: Ordered list of distinct normalized URLs.
+    """
     seen: set[str] = set()
     ordered: list[str] = []
     for raw in _URL_RE.findall(markdown or ""):
@@ -57,15 +84,15 @@ def extract_urls(markdown: str) -> list[str]:
 
 @dataclass
 class CitationAudit:
-    """How a report's citations fared against the retrieval ledger."""
-    cited: list[str] = field(default_factory=list)
-    verified: list[str] = field(default_factory=list)
-    unverified: list[str] = field(default_factory=list)
-    unused: list[str] = field(default_factory=list)
+    """Audit report comparing cited URLs against the genuine retrieval ledger."""
+    cited: list[str] = field(default_factory=list)        # All URLs found in the report text
+    verified: list[str] = field(default_factory=list)     # URLs in report that were genuinely retrieved
+    unverified: list[str] = field(default_factory=list)   # URLs in report NEVER retrieved (hallucinations)
+    unused: list[str] = field(default_factory=list)       # URLs retrieved during search but not cited
 
     @property
     def verified_ratio(self) -> float:
-        """Fraction of cited URLs that were genuinely retrieved."""
+        """Fraction of cited URLs that were genuinely retrieved (0.0 to 1.0)."""
         return round(len(self.verified) / len(self.cited), 3) if self.cited else 1.0
 
     @property
@@ -89,7 +116,15 @@ class CitationAudit:
 
 
 def audit_citations(report_markdown: str, retrieved_urls: list[str]) -> CitationAudit:
-    """Diff the report's URLs against the retrieval ledger."""
+    """Diff the report's URLs against the retrieval ledger.
+    
+    Args:
+        report_markdown: Synthesized Markdown text of the report.
+        retrieved_urls: List of URLs genuinely returned by searches and stored in DB.
+        
+    Returns:
+        CitationAudit: The audit breakdown.
+    """
     ledger = {normalize_url(u) for u in retrieved_urls if u}
     cited = extract_urls(report_markdown)
 
@@ -101,3 +136,4 @@ def audit_citations(report_markdown: str, retrieved_urls: list[str]) -> Citation
     return CitationAudit(
         cited=cited, verified=verified, unverified=unverified, unused=unused
     )
+

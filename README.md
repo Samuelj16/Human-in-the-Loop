@@ -266,7 +266,7 @@ returns a clean 503 rather than failing at boot.
 | `REDIS_URL`                                               | unset          | Unset ⇒ jobs run in-process                                                                                                          |
 | `JWT_SECRET`                                              | —              | **Required in production.** `python -c "import secrets; print(secrets.token_urlsafe(48))"`                                           |
 | `LLM_PROVIDER`                                            | `gemini`       | `anthropic` \| `openai` \| `gemini`, or an open-weight backend — see [Running on open-weight models](#running-on-open-weight-models) |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | unset          | Leave _unset_, not empty — see [the hardest bug](#the-hardest-bug)                                                                   |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | unset          | Leave _unset_, not empty — see [the hardest bug](#1-what-was-the-hardest-bug-you-hit)                                                                   |
 | `ANTHROPIC_MODEL` / `OPENAI_MODEL` / `GEMINI_MODEL`       | per provider   | Model id for the hosted APIs                                                                                                         |
 | `OPEN_MODEL_NAME`                                         | `llama3.1:8b`  | Model id for an open-weight backend                                                                                                  |
 | `OPEN_MODEL_BASE_URL`                                     | unset          | Only for endpoints that aren't a known preset                                                                                        |
@@ -351,31 +351,61 @@ Two honest caveats:
 
 ## Deployment
 
-Two services. Roughly 15 minutes.
+### Before you start: the demo needs a model key
 
-### Backend → Railway
+A deployed instance with no model key is a broken demo — every task fails at
+planning with *"No credentials found"*. The cheapest working combination:
 
-1. **New Project → Deploy from GitHub repo**, root directory `api`.
-   [`railway.json`](api/railway.json) and the [`Dockerfile`](api/Dockerfile) are
-   already there; migrations run on boot and `/api/health` is the healthcheck.
-2. **Add PostgreSQL** and **Add Redis** from the Railway dashboard. Both inject
-   their connection URLs automatically.
-3. Set variables: `DATABASE_URL` (swap Railway's `postgresql://` prefix for
-   `postgresql+asyncpg://`), `REDIS_URL`, `JWT_SECRET`, your model key,
-   `TAVILY_API_KEY`, `AUTO_CREATE_SCHEMA=false`, and `CORS_ORIGINS` set to your
-   Vercel URL.
-4. **Add a second service** from the same repo for the worker, with start
-   command `arq app.worker.WorkerSettings` and the same variables. Without it,
-   queued jobs are never consumed.
+| Need | Free option | Note |
+|---|---|---|
+| Model | **Groq** — free tier, no card | OpenAI-compatible, so it works through the open-weight adapter |
+| Search | **Tavily** — 1,000 searches/month | Without it you get clearly-labelled stub results |
+| Host | **Railway** trial + **Vercel** free | Enough for a portfolio demo |
 
-### Frontend → Vercel
+```bash
+LLM_PROVIDER=groq
+OPEN_MODEL_NAME=llama-3.3-70b-versatile
+OPEN_MODEL_API_KEY=gsk_...
+```
 
-1. **Import the repo**, set **Root Directory** to `web`.
-2. One environment variable: `API_URL` = your Railway API URL. It is read
-   server-side only — the browser never sees it.
-3. Deploy, then put the URL back into the API's `CORS_ORIGINS`.
+**`JWT_SECRET` will reject weak values on boot** — at least 32 characters, high
+entropy, no placeholder words. Generate one with:
 
-Then replace the "Live demo" line at the top of this README with the link.
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+### The smallest deploy that works: two services
+
+Skip Redis and the worker. With `REDIS_URL` unset, jobs run inside the API
+process — verified booting in production mode against Postgres:
+
+```json
+{"status":"ok","environment":"production","provider":"groq","queue":"in-process"}
+```
+
+The trade-off is honest and small for a demo: a redeploy *during* a run orphans
+that task, and the reaper fails it cleanly within 15 minutes rather than leaving
+it spinning. Add Redis and the worker service when that matters.
+
+1. **Railway → Deploy from GitHub repo**, root directory `api`.
+2. **Add PostgreSQL.** Set `DATABASE_URL` to Railway's value with the
+   `postgresql://` prefix swapped for `postgresql+asyncpg://`.
+3. Set `JWT_SECRET`, `AUTO_CREATE_SCHEMA=false`, your model key, and
+   `CORS_ORIGINS` (fill in after step 5).
+4. **Vercel → Import repo**, root directory `web`, one variable: `API_URL` =
+   the Railway URL. It is read server-side only; the browser never sees it.
+5. Put the Vercel URL into the API's `CORS_ORIGINS`, and replace the
+   "Live demo" line at the top of this file.
+
+### Full deployment, with a durable queue
+
+Everything above, plus **Add Redis**, and a **second Railway service** from the
+same repo with start command `arq app.worker.WorkerSettings` and the same
+variables. Without that second service nothing consumes the queue and every task
+sits in `queued` forever.
+
+Roughly 15 minutes either way.
 
 ---
 

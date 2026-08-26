@@ -1,4 +1,20 @@
-"""Application settings, loaded from environment / .env."""
+"""Application configuration and environment settings.
+
+This module defines the central `Settings` class using Pydantic Settings.
+Settings are dynamically loaded from environment variables and `.env` files.
+It provides typed configuration for:
+  - Application lifecycle and environment (development vs. production)
+  - CORS policies and allowed origins
+  - Database connectivity (PostgreSQL in production, SQLite fallback for local development)
+  - Background task execution (in-process asyncio vs. Redis-backed Arq workers)
+  - Authentication and JWT parameters
+  - Multi-provider LLM credentials and default model configurations
+  - Open-weight model server presets and token pricing overrides
+  - Web search API integration (Tavily vs. offline stub)
+  - Spend caps and token/iteration safeguards
+  - Per-IP rate limiting policies
+  - Data retention and periodic cleanup windows
+"""
 from functools import lru_cache
 from typing import Literal
 
@@ -17,27 +33,35 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # --- Application & Environment -----------------------------------------
+    # Name of the application displayed in API root and docs metadata
     app_name: str = "Human in the Loop"
+    # Runtime environment: determines security strictness and dev conveniences
     environment: Literal["development", "production"] = "development"
-    # Comma-separated list of allowed browser origins.
+    # Comma-separated list of allowed browser origins for CORS middleware
     cors_origins: str = "http://localhost:3000"
 
+    # --- Database & Persistence --------------------------------------------
     # Postgres in every real environment. The sqlite+aiosqlite fallback exists
     # so the API boots on a laptop with no database daemon running.
     database_url: str = "sqlite+aiosqlite:///./hitl.db"
     # Alembic owns the schema in production. create_all stays available for
     # local dev and tests, where a one-command start matters more.
     auto_create_schema: bool = True
+    # Redis connection URL for background job dispatch via Arq.
     # Unset => background jobs run in-process instead of via an arq worker.
     redis_url: str | None = None
 
-    # --- auth --------------------------------------------------------------
+    # --- Auth & Cryptography -----------------------------------------------
+    # Secret key for HMAC signing of JWT tokens.
     # Required in every environment so reloads/workers share a stable signing key.
     jwt_secret: str = ""
+    # Cryptographic signing algorithm for JWT access tokens
     jwt_algorithm: str = "HS256"
+    # Token expiration lifespan in minutes (default is 7 days)
     jwt_expire_minutes: int = 60 * 24 * 7
 
-    # --- model providers ---------------------------------------------------
+    # --- Model Providers ---------------------------------------------------
     # Hosted APIs, plus any OpenAI-compatible server for open-weight models.
     # Preset names double as base-URL shorthands (app/llm/openai_compatible.py).
     llm_provider: Literal[
@@ -49,17 +73,20 @@ class Settings(BaseSettings):
         # any other OpenAI-compatible endpoint; needs OPEN_MODEL_BASE_URL
         "open",
     ] = "gemini"
+    # API key and model selection for Anthropic Claude provider
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-opus-5"
     # Server-side refusal fallbacks (beta). Disable if your org lacks the beta.
     anthropic_enable_fallbacks: bool = True
+    # API key and model selection for OpenAI provider
     openai_api_key: str | None = None
     # Whatever chat-completions model your account has access to.
     openai_model: str = "gpt-5"
+    # API key and model selection for Google Gemini provider
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.6-flash"
 
-    # --- open-weight models (Ollama, vLLM, OpenRouter, Groq, ...) ----------
+    # --- Open-Weight Models (Ollama, vLLM, OpenRouter, Groq, ...) ----------
     # Which server to talk to; defaults to LLM_PROVIDER when it names a preset.
     open_model_preset: str | None = None
     # Only needed for an endpoint that is not one of the known presets.
@@ -73,22 +100,30 @@ class Settings(BaseSettings):
     open_model_price_input: float = 0.0
     open_model_price_output: float = 0.0
 
-    # --- search ------------------------------------------------------------
+    # --- Search Engine Integration -----------------------------------------
+    # Tavily API key for live web search queries. If unset, falls back to offline stub search.
     tavily_api_key: str | None = None
 
-    # --- spend caps (per research task) ------------------------------------
+    # --- Spend Caps & Safeguards (Per Research Task) -----------------------
     # These are the difference between a demo link and a surprise invoice.
+    # Maximum conversational turns in the research loop per task
     max_tool_iterations: int = 12
+    # Maximum individual web search queries permitted per task
     max_searches_per_task: int = 8
+    # Hard cumulative output token ceiling per task across all turns
     max_output_tokens_per_task: int = 60_000
+    # Maximum research tasks a single user can create per 24-hour window
     max_tasks_per_user_per_day: int = 25
 
-    # --- per-IP throttling on unauthenticated endpoints -------------------
+    # --- Per-IP Throttling on Unauthenticated Endpoints --------------------
+    # Enables in-memory sliding window rate limiting on register and login
     rate_limit_enabled: bool = True
+    # Maximum registration attempts allowed per IP address per hour
     rate_limit_register_per_hour: int = 5
+    # Maximum login attempts allowed per IP address per 15-minute window
     rate_limit_login_per_15_min: int = 10
 
-    # --- data retention ---------------------------------------------------
+    # --- Data Retention & Lifecycle ----------------------------------------
     # "Save every search the user ever made" is a promise about their data.
     # 0 keeps history forever; any positive value purges tasks older than that
     # many days on a schedule. Whatever this is set to, say so in the README.
@@ -96,7 +131,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_security_settings(self) -> "Settings":
-        """Refuse to start with unsafe defaults in production."""
+        """Refuse to start with unsafe defaults or weak secrets in production.
+        
+        Validates that JWT_SECRET is adequately long (>= 32 characters), does not
+        contain well-known placeholder strings, and exhibits sufficient character entropy.
+        """
         placeholders = ("change-me", "dev-secret", "placeholder")
         normalized = self.jwt_secret.casefold()
         if (
@@ -113,14 +152,26 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
-        """CORS origins, parsed from the comma-separated setting."""
+        """CORS origins, parsed from the comma-separated setting.
+        
+        Returns:
+            A list of trimmed origin URLs allowed to make cross-origin requests.
+        """
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """Cached settings singleton."""
+    """Cached settings singleton.
+    
+    Reads environment variables and .env files once on initial call and caches
+    the parsed `Settings` instance for the process lifetime.
+    
+    Returns:
+        The cached Settings configuration instance.
+    """
     return Settings()
 
 
+# Global application settings instance for convenient direct imports
 settings = get_settings()

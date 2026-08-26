@@ -3,6 +3,15 @@
 Each job owns its own short-lived DB sessions. The research loop can run for
 minutes, so it must never hold a transaction open while waiting on the model -
 progress hooks open, write, and close.
+
+Pipeline Stages:
+  1. `plan_task`: Invokes the LLM in structured JSON mode to parse the inquiry,
+     formulate 3-6 action steps, ask up to 3 clarifying questions, calculate pre-flight
+     cost estimates, and transition the task into `awaiting_approval`.
+  2. `run_task`: Triggered once human approves the plan. Executes the multi-turn
+     tool loop (`run_research`), persists turn telemetry in `llm_turns`, records
+     retrieved sources in `sources`, streams progress events to `task_events`,
+     audits citation integrity (`audit_citations`), and sets `complete` status.
 """
 from __future__ import annotations
 
@@ -26,11 +35,17 @@ from app.search.base import SearchResult
 log = logging.getLogger(__name__)
 
 
-async def _add_event(task_id: str, kind: str, message: str, data: dict | None = None):
+async def _add_event(task_id: str, kind: str, message: str, data: dict | None = None) -> None:
     """Append a progress event with a monotonic per-task cursor.
 
     A task is only ever worked by one job at a time, so reading the current max
     and adding one is safe here; the index on (task_id, seq) makes the read cheap.
+    
+    Args:
+        task_id: The target research task ID.
+        kind: Event category ('status', 'search', 'thought', 'error', 'warning').
+        message: Human-readable status description.
+        data: Optional structured JSON payload for frontend inspection.
     """
     async with SessionLocal() as session:
         next_seq = await session.scalar(
@@ -51,6 +66,13 @@ async def _add_event(task_id: str, kind: str, message: str, data: dict | None = 
 
 
 async def _set_status(task_id: str, status: str, **fields: Any) -> None:
+    """Update task lifecycle status and optional fields in an isolated short-lived transaction.
+    
+    Args:
+        task_id: The research task ID.
+        status: Target TaskStatus value.
+        **fields: Additional ResearchTask column attributes to update.
+    """
     async with SessionLocal() as session:
         task = await session.get(ResearchTask, task_id)
         if task is None:
@@ -62,7 +84,11 @@ async def _set_status(task_id: str, status: str, **fields: Any) -> None:
 
 
 async def _touch_heartbeat(task_id: str) -> None:
-    """Prove the worker is still alive so the reaper leaves this task alone."""
+    """Prove the worker is still alive so the reaper leaves this task alone.
+    
+    Args:
+        task_id: The active research task ID.
+    """
     async with SessionLocal() as session:
         task = await session.get(ResearchTask, task_id)
         if task is not None:
@@ -71,12 +97,26 @@ async def _touch_heartbeat(task_id: str) -> None:
 
 
 async def _is_cancelled(task_id: str) -> bool:
+    """Check if task was cancelled by the user between conversational turns.
+    
+    Args:
+        task_id: The research task ID.
+        
+    Returns:
+        bool: True if task no longer exists or status is CANCELLED.
+    """
     async with SessionLocal() as session:
         task = await session.get(ResearchTask, task_id)
         return task is None or task.status == TaskStatus.CANCELLED
 
 
 async def _record_source(task_id: str, result: SearchResult) -> None:
+    """Idempotently record a retrieved web page in the task's sources ledger.
+    
+    Args:
+        task_id: Target research task ID.
+        result: The SearchResult object containing url, title, and snippet.
+    """
     async with SessionLocal() as session:
         exists = await session.scalar(
             select(Source.id).where(Source.task_id == task_id, Source.url == result.url)
@@ -101,6 +141,12 @@ async def _record_turn(
 
     Without this a disappointing report is unexplainable after the fact, and the
     cost estimates in app/pricing.py can never be calibrated against reality.
+    
+    Args:
+        task_id: Target task ID.
+        phase: Execution phase ('planning', 'research', 'finalise').
+        provider_name: LLM adapter name (e.g. 'anthropic', 'openai', 'gemini').
+        response: The LLMResponse received from the provider.
     """
     usage = response.usage
     async with SessionLocal() as session:
@@ -131,7 +177,14 @@ async def _record_turn(
 
 
 async def _accumulate(task_id: str, response: LLMResponse) -> None:
-    """Roll one turn's usage into the task's running totals."""
+    """Roll one turn's usage into the task's running totals.
+    
+    Updates token counters, calculates incremental dollar cost, and bumps worker heartbeat.
+    
+    Args:
+        task_id: Target task ID.
+        response: Completed LLM turn response.
+    """
     usage = response.usage
     async with SessionLocal() as session:
         task = await session.get(ResearchTask, task_id)
@@ -165,13 +218,19 @@ async def plan_task(ctx: dict | None, task_id: str) -> None:
     Ends in `awaiting_approval` with a cost estimate attached. Every failure path
     writes a status: a background job that dies silently leaves the UI spinning
     with nothing behind it.
+    
+    Args:
+        ctx: Optional worker context (from Arq).
+        task_id: Unique task identifier.
     """
+    # 1. Fetch initial task metadata
     async with SessionLocal() as session:
         task = await session.get(ResearchTask, task_id)
         if task is None or task.status == TaskStatus.CANCELLED:
             return
         query = task.query
 
+    # 2. Resolve LLM provider
     try:
         provider = get_llm_provider()
     except Exception as exc:  # noqa: BLE001 - misconfiguration must be visible
@@ -180,6 +239,7 @@ async def plan_task(ctx: dict | None, task_id: str) -> None:
         await _set_status(task_id, TaskStatus.FAILED, error=str(exc))
         return
 
+    # 3. Transition status to PLANNING and emit status event
     await _set_status(
         task_id,
         TaskStatus.PLANNING,
@@ -189,6 +249,7 @@ async def plan_task(ctx: dict | None, task_id: str) -> None:
     )
     await _add_event(task_id, "status", "Drafting a research plan for your review.")
 
+    # 4. Invoke LLM planner in structured JSON mode
     try:
         plan, response = await draft_plan(query, provider)
     except LLMError as exc:
@@ -202,10 +263,11 @@ async def plan_task(ctx: dict | None, task_id: str) -> None:
         await _set_status(task_id, TaskStatus.FAILED, error=str(exc))
         return
 
+    # 5. Persist turn telemetry & accumulate token usage
     await _record_turn(task_id, "planning", provider.name, response)
     await _accumulate(task_id, response)
 
-    # Price the plan before anyone is asked to approve it.
+    # 6. Price the drafted plan before presenting it to the human
     estimate = estimate_task_cost(
         plan.plan,
         model=provider.model,
@@ -213,6 +275,7 @@ async def plan_task(ctx: dict | None, task_id: str) -> None:
         max_iterations=settings.max_tool_iterations,
     )
 
+    # 7. Transition to AWAITING_APPROVAL (Human Gate)
     await _set_status(
         task_id,
         TaskStatus.AWAITING_APPROVAL,
@@ -238,7 +301,12 @@ async def run_task(ctx: dict | None, task_id: str) -> None:
     Runs the agent loop, streams progress into task_events, records per-turn
     telemetry, then checks every citation against the sources actually retrieved
     before marking the task complete.
+    
+    Args:
+        ctx: Optional worker context (from Arq).
+        task_id: Unique task identifier.
     """
+    # 1. Load approved task configuration, edited plan, answers, and vetoed URLs
     async with SessionLocal() as session:
         task = await session.get(ResearchTask, task_id)
         if task is None or task.status == TaskStatus.CANCELLED:
@@ -255,6 +323,7 @@ async def run_task(ctx: dict | None, task_id: str) -> None:
             ).all()
         )
 
+    # 2. Instantiate LLM provider, search client, and budget caps
     provider = get_llm_provider()
     search = get_search_client()
     budget = Budget(
@@ -263,6 +332,7 @@ async def run_task(ctx: dict | None, task_id: str) -> None:
         max_output_tokens=settings.max_output_tokens_per_task,
     )
 
+    # 3. Transition to RESEARCHING
     await _set_status(task_id, TaskStatus.RESEARCHING, heartbeat_at=utcnow())
     await _add_event(
         task_id,
@@ -276,6 +346,7 @@ async def run_task(ctx: dict | None, task_id: str) -> None:
         await _record_turn(task_id, phase, provider.name, response)
         await _accumulate(task_id, response)
 
+    # 4. Wire progress hooks for events, source logging, cancellation checks, and telemetry
     hooks = AgentHooks(
         on_event=lambda kind, message, data=None: _add_event(
             task_id, kind, message, data
@@ -285,6 +356,7 @@ async def run_task(ctx: dict | None, task_id: str) -> None:
         on_turn=on_turn,
     )
 
+    # 5. Execute the research loop
     try:
         outcome: ResearchOutcome = await run_research(
             query=query,
@@ -307,11 +379,12 @@ async def run_task(ctx: dict | None, task_id: str) -> None:
         await _set_status(task_id, TaskStatus.FAILED, error=str(exc))
         return
 
+    # 6. Check if stopped due to user cancellation
     if outcome.stopped_reason == "cancelled":
         await _set_status(task_id, TaskStatus.CANCELLED)
         return
 
-    # Check the report's citations against what was actually retrieved.
+    # 7. Audit citations: verify all cited URLs against genuine search ledger
     async with SessionLocal() as session:
         retrieved = list(
             (
@@ -330,6 +403,7 @@ async def run_task(ctx: dict | None, task_id: str) -> None:
             {"unverified": audit.unverified},
         )
 
+    # 8. Mark task COMPLETE with final markdown report and public share ID
     await _set_status(
         task_id,
         TaskStatus.COMPLETE,
@@ -340,3 +414,4 @@ async def run_task(ctx: dict | None, task_id: str) -> None:
         completed_at=utcnow(),
         heartbeat_at=None,
     )
+

@@ -4,6 +4,15 @@ Written by hand rather than pulled from a framework because the interesting
 parts of this project *are* the loop - the human approval gate, the spend caps,
 the cancellation checks, and the source ledger. A framework would hide exactly
 the code worth showing.
+
+Loop Phases:
+  1. `draft_plan`: Phase 1 structured planning output via JSON schema constraints.
+  2. `run_research`: Phase 2 multi-turn tool execution loop.
+      - Injects system prompt with user clarification answers & approved plan steps.
+      - Issues search tool calls concurrently per turn via `asyncio.gather`.
+      - Enforces budget caps (max iterations, max searches, max output tokens).
+      - Checks cancellation tokens between turns.
+      - Automatically re-prompts if model yields truncated non-report text.
 """
 from __future__ import annotations
 
@@ -21,6 +30,7 @@ from app.llm.base import (
     LLMProvider,
     LLMResponse,
     Message,
+    ToolCall,
     ToolSpec,
     Usage,
     tool_result_message,
@@ -30,6 +40,7 @@ from app.search.base import SearchClient, SearchResult
 
 log = logging.getLogger(__name__)
 
+# Search tool specification exposed to LLM providers during research phase
 SEARCH_TOOL = ToolSpec(
     name="web_search",
     description=(
@@ -83,18 +94,25 @@ PLAN_SCHEMA = {
 # --------------------------------------------------------------------------
 @dataclass
 class Budget:
-    """Hard caps. Without these a public demo link is an open tab at the bar."""
+    """Hard caps and usage ledger for research tasks.
+    
+    Without these a public demo link is an open tab at the bar.
+    """
 
-    max_iterations: int = 12
-    max_searches: int = 8
-    max_output_tokens: int = 60_000
+    max_iterations: int = 12       # Maximum LLM turns in the tool loop
+    max_searches: int = 8          # Maximum distinct web searches allowed
+    max_output_tokens: int = 60_000 # Hard ceiling on cumulative generated output tokens
 
     iterations_used: int = 0
     searches_used: int = 0
     usage: Usage = field(default_factory=Usage)
 
     def record(self, usage: Usage) -> None:
-        """Fold one call's usage into the running total."""
+        """Fold one call's token usage into the running cumulative total.
+        
+        Args:
+            usage: Token usage report from a single LLM invocation.
+        """
         self.usage = self.usage + usage
 
     @property
@@ -103,7 +121,11 @@ class Budget:
         return max(0, self.max_searches - self.searches_used)
 
     def exhausted_reason(self) -> str | None:
-        """Why the run must stop, or None if it may continue."""
+        """Evaluate whether any budget limit has been reached.
+        
+        Returns:
+            str | None: Reason string if budget is exhausted, or None if task may proceed.
+        """
         if self.iterations_used >= self.max_iterations:
             return f"turn limit of {self.max_iterations} reached"
         if self.searches_used >= self.max_searches:
@@ -144,10 +166,10 @@ class AgentHooks:
 
     The loop stays free of database code; the job layer decides what to store.
     """
-    on_event: EventFn = _noop_event
-    on_source: SourceFn = _noop_source
-    should_cancel: CancelFn = _never_cancel
-    on_turn: TurnFn = _noop_turn
+    on_event: EventFn = _noop_event        # Emits user-visible timeline events
+    on_source: SourceFn = _noop_source     # Records retrieved web search sources
+    should_cancel: CancelFn = _never_cancel # Polled between turns to check user cancellation
+    on_turn: TurnFn = _noop_turn           # Records turn-level token & latency telemetry
 
 
 @dataclass
@@ -171,7 +193,17 @@ class ResearchOutcome:
 # Phase 1: draft a plan for a human to approve
 # --------------------------------------------------------------------------
 def _extract_json(text: str) -> dict[str, Any]:
-    """Pull a JSON object out of a model response, fences or not."""
+    """Pull a JSON object out of a model response, fences or not.
+    
+    Args:
+        text: Raw text string from model completion.
+        
+    Returns:
+        dict[str, Any]: Parsed JSON dictionary.
+        
+    Raises:
+        LLMError: If no valid JSON dictionary could be recovered.
+    """
     cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE)
     try:
         return json.loads(cleaned)
@@ -187,6 +219,16 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 
 def _as_str_list(value: Any, limit: int, max_length: int = 280) -> list[str]:
+    """Coerce an arbitrary payload value into a bounded list of trimmed strings.
+    
+    Args:
+        value: Input data (expected list).
+        limit: Maximum number of items to return.
+        max_length: Maximum character length per string item.
+        
+    Returns:
+        list[str]: Sanitized list of strings.
+    """
     if not isinstance(value, list):
         return []
     return [str(v).strip()[:max_length] for v in value if str(v).strip()][:limit]
@@ -199,6 +241,13 @@ async def draft_plan(
 
     Uses the provider's constrained-output mode, so the shape is guaranteed by
     the API rather than by a regex over prose.
+    
+    Args:
+        query: The user's research question.
+        provider: Active LLM provider adapter.
+        
+    Returns:
+        tuple[ResearchPlan, LLMResponse]: Structured plan and the underlying turn response.
     """
     try:
         data, response = await provider.complete_json(
@@ -235,6 +284,14 @@ async def draft_plan(
 # Phase 2: execute the approved plan
 # --------------------------------------------------------------------------
 def _format_clarifications(answers: dict[str, str] | None) -> str:
+    """Format user clarification answers into prompt text blocks.
+    
+    Args:
+        answers: Key-value dictionary of questions and user-supplied answers.
+        
+    Returns:
+        str: Formatted clarification section.
+    """
     if not answers:
         return "The person did not add clarifications."
     lines = [f"Q: {q}\nA: {a}" for q, a in answers.items() if str(a).strip()]
@@ -252,10 +309,24 @@ async def _run_search(
     excluded_urls: set[str],
     memo: dict[str, str],
 ) -> str:
+    """Execute a single web search tool call, applying memoization, caps, and human vetoes.
+    
+    Args:
+        call_args: Arguments passed to the tool call by the LLM.
+        search: Active SearchClient instance.
+        budget: Task budget tracker.
+        hooks: Progress and event callbacks.
+        excluded_urls: Set of URLs explicitly vetoed by the user.
+        memo: In-memory dictionary caching search query results for this run.
+        
+    Returns:
+        str: Search result text rendered for tool output.
+    """
     query = str(call_args.get("query", "")).strip()
     if not query:
         return "Error: `query` was empty. Provide a specific search query."
 
+    # Normalize query whitespace for deduplication lookup
     key = " ".join(query.lower().split())
     if key in memo:
         # Models re-ask the same thing across turns; charging for it twice is
@@ -277,6 +348,7 @@ async def _run_search(
         await hooks.on_event("error", f"Search failed: {exc}", {"query": query})
         return f"Search failed: {exc}. Try a different query or continue without it."
 
+    # Filter out results vetoed by the human on the approval gate
     kept = [r for r in results if r.url not in excluded_urls]
     for result in kept:
         await hooks.on_source(result)
@@ -310,11 +382,25 @@ async def run_research(
     back, and stop when it writes the report or runs out of budget. Cancellation
     is checked between turns, and the caps are enforced here rather than trusted
     to the model.
+    
+    Args:
+        query: The original research question.
+        plan: Ordered list of approved plan steps.
+        answers: Optional user answers to clarifying questions.
+        provider: Active LLM provider adapter.
+        search: Active SearchClient instance.
+        budget: Task spend and turn budget.
+        hooks: Progress and telemetry callback hooks.
+        excluded_urls: Set of URLs vetoed by human researcher.
+        
+    Returns:
+        ResearchOutcome: Final markdown report, token usage, search counts, and stop reason.
     """
     hooks = hooks or AgentHooks()
     excluded_urls = excluded_urls or set()
     memo: dict[str, str] = {}
 
+    # Format researcher system prompt
     system = RESEARCHER_SYSTEM.format(
         query=query.strip(),
         clarifications=_format_clarifications(answers),
@@ -341,11 +427,14 @@ async def run_research(
         await hooks.on_turn(phase, response)
         return response
 
+    # Main conversational tool execution loop
     while True:
+        # Check user cancellation between turns
         if await hooks.should_cancel():
             await hooks.on_event("status", "Cancelled by the user.")
             return ResearchOutcome(report, budget.usage, budget.searches_used, "cancelled")
 
+        # Check budget exhaustion limits
         reason = budget.exhausted_reason()
         if reason:
             # Spend one last turn turning gathered evidence into a report.
@@ -362,6 +451,7 @@ async def run_research(
         )
         messages.append(response.as_message())
 
+        # If model did not emit any tool calls, it has finished searching
         if not response.tool_calls:
             report = response.text
             if len(report) < 200:
@@ -383,6 +473,7 @@ async def run_research(
                 report, budget.usage, budget.searches_used, "completed"
             )
 
+        # Stream reasoning thought message if present
         if response.text:
             await hooks.on_event("thought", response.text[:500])
 
@@ -413,7 +504,9 @@ async def run_research(
                 return tool_result_message(call, f"Tool failed: {exc}", is_error=True)
             return tool_result_message(call, text)
 
+        # Execute parallel tool calls concurrently
         results = await asyncio.gather(
             *(resolve(call) for call in response.tool_calls)
         )
         messages.extend(results)
+

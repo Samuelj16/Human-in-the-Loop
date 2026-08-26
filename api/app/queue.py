@@ -1,9 +1,15 @@
-"""Job dispatch.
+"""Job dispatch and queue management.
 
 With REDIS_URL set, work goes to an arq worker (`arq app.worker.WorkerSettings`)
 so a long research run survives an API redeploy. Without it, the same coroutine
 runs in-process - handy on a laptop, and the reason `docker compose` is optional
 for a first run.
+
+Key Behaviors:
+  - In-process retention: Background asyncio tasks are retained in `_background` set
+    to prevent Python's garbage collector from dropping running tasks mid-flight.
+  - Done callbacks: Logs any unhandled exceptions from fire-and-forget in-process tasks.
+  - Arq Redis enqueueing: Manages connection pool lifecycle cleanly when Redis is configured.
 """
 from __future__ import annotations
 
@@ -15,6 +21,7 @@ from app.jobs import plan_task, run_task
 
 log = logging.getLogger(__name__)
 
+# Registry of supported background job functions
 JOBS = {"plan_task": plan_task, "run_task": run_task}
 
 # Keeps in-process tasks from being garbage collected mid-flight.
@@ -22,15 +29,23 @@ _background: set[asyncio.Task] = set()
 
 
 async def enqueue(job_name: str, task_id: str) -> None:
-    """Dispatch a job.
+    """Dispatch a job for asynchronous execution.
 
     With REDIS_URL set this goes to an arq worker, so a long run survives an API
     redeploy. Without it the coroutine runs in this process - fine on a laptop,
     but a restart orphans the task for the reaper to clean up.
+    
+    Args:
+        job_name: The name of the registered job (e.g. "plan_task" or "run_task").
+        task_id: The 32-character research task identifier.
+        
+    Raises:
+        ValueError: If `job_name` is not recognized in `JOBS`.
     """
     if job_name not in JOBS:
         raise ValueError(f"Unknown job {job_name!r}")
 
+    # Mode A: Dispatch to external Redis-backed Arq worker
     if settings.redis_url:
         from arq import create_pool
         from arq.connections import RedisSettings
@@ -42,10 +57,12 @@ async def enqueue(job_name: str, task_id: str) -> None:
         finally:
             await pool.aclose()
 
+    # Mode B: Run in-process using asyncio.create_task
     task = asyncio.create_task(JOBS[job_name](None, task_id))
     _background.add(task)
 
     def _finished(done: asyncio.Task) -> None:
+        """Callback triggered when in-process asyncio task concludes."""
         _background.discard(done)
         # Without this an exception inside a fire-and-forget task is never
         # printed anywhere, and the row just stops changing.
@@ -56,3 +73,4 @@ async def enqueue(job_name: str, task_id: str) -> None:
             )
 
     task.add_done_callback(_finished)
+
