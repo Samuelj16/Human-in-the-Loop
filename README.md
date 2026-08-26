@@ -71,7 +71,7 @@ flowchart TD
 
     subgraph ext["🌐  External"]
         direction LR
-        LLM["Claude / OpenAI<br/>provider-neutral adapter"]
+        LLM["Claude · GPT · Gemini<br/>or open weights<br/>provider-neutral adapter"]
         TAV["Tavily search"]
     end
 
@@ -236,25 +236,27 @@ be replaced with observed numbers.
 
 ## Testing
 
-**99 tests, all hermetic** — no API key, no network, no spend. The agent is
+**117 tests, all hermetic** — no API key, no network, no spend. The agent is
 driven by scripted fake providers, so the loop's guarantees are tested as
 properties of *our* code rather than of a model's behaviour.
 
 ```bash
 cd api && .venv/bin/python -m pytest -q
-# 99 passed
+# 117 passed
 ```
 
 | Suite | Tests | What it pins down |
 |---|---:|---|
 | `test_agent_loop.py` | 21 | Spend caps (search/turn/token), cancellation mid-run, source vetoes, parallel tool execution, result ordering, memoisation, empty-report guard |
+| `test_open_model.py` | 13 | Open-weight backends over **real HTTP** against a stub server: capability degradation, credential guard, zero-cost local pricing |
+| `test_auth.py` | 13 | Registration, login, account deletion cascade |
 | `test_jobs_pipeline.py` | 11 | Planning → pricing → approval, citation auditing, telemetry, and the wedged-task regressions |
 | `test_approval_gate.py` | 10 | **Concurrent double-approval starts exactly one run**, edit detection, cursor feed, cross-user isolation |
 | `test_tasks.py` | 10 | Task lifecycle endpoints |
-| `test_auth.py` | 9 | Registration, login, account deletion cascade |
-| `test_reaper.py` | 8 | Orphan detection, live runs left alone, retention purge |
+| `test_reaper.py` | 10 | Orphan detection, live runs left alone, retention purge |
 | `test_pricing.py` | 7 | Cost maths, cache discount, estimate bounds, unpriced-model flagging |
 | `test_citations.py` | 6 | URL normalisation, invented-citation detection |
+| `test_gemini_provider.py` | 5 | Gemini adapter wire format |
 | `test_ratelimit.py` | 4 | Sliding window, per-key isolation, window expiry |
 | `test_retry.py` | 4 | Transient retried, fatal not retried, attempt accounting |
 | `test_public.py` | 3 | Public report visibility rules |
@@ -311,8 +313,9 @@ returns a clean 503 rather than failing at boot.
 | `DATABASE_URL` | local Postgres | `sqlite+aiosqlite:///./hitl.db` works as a no-daemon fallback |
 | `REDIS_URL` | unset | Unset ⇒ jobs run in-process |
 | `JWT_SECRET` | — | **Required in production.** `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
-| `LLM_PROVIDER` | `anthropic` | `anthropic` \| `openai` |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | unset | Leave *unset*, not empty — see [the hardest bug](#the-hardest-bug) |
+| `LLM_PROVIDER` | `gemini` | `anthropic` \| `openai` \| `gemini`, or an open-weight backend — see [Running on open-weight models](#running-on-open-weight-models) |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | unset | Leave *unset*, not empty — see [the hardest bug](#the-hardest-bug) |
+| `ANTHROPIC_MODEL` / `OPENAI_MODEL` / `GEMINI_MODEL` | per provider | Model id for the hosted APIs |
 | `OPEN_MODEL_NAME` | `llama3.1:8b` | Model id for an open-weight backend |
 | `OPEN_MODEL_BASE_URL` | unset | Only for endpoints that aren't a known preset |
 | `OPEN_MODEL_API_KEY` | unset | Local runtimes ignore it; hosted ones require it |
