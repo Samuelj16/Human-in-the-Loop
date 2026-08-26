@@ -46,7 +46,15 @@ npm run build
 
 In `.env` (or `api/.env`):
 
-- **Claude (Default LLM Provider)**:
+- **Google Gemini (Default LLM Provider)**:
+
+  ```env
+  LLM_PROVIDER=gemini
+  GEMINI_API_KEY="your-gemini-api-key"
+  GEMINI_MODEL="gemini-3.6-flash"
+  ```
+
+- **Claude (Anthropic)**:
 
   ```env
   LLM_PROVIDER=anthropic

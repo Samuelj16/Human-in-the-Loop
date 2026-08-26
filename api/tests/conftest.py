@@ -44,9 +44,11 @@ from app.models import ResearchTask, Source, TaskEvent, User
 from app.search.base import SearchClient, SearchResult
 from app.security import hash_password
 
+from sqlalchemy.pool import StaticPool
+
 test_engine = create_async_engine(
-    f"sqlite+aiosqlite:///{TEST_DB_PATH}",
-    poolclass=NullPool,
+    "sqlite+aiosqlite:///:memory:",
+    poolclass=StaticPool,
     connect_args={"check_same_thread": False},
     future=True,
 )
@@ -74,11 +76,10 @@ async def setup_db(monkeypatch):
     monkeypatch.setattr("app.routers.tasks.enqueue", _noop_enqueue)
 
     async with test_engine.begin() as conn:
-        await conn.run_sync(lambda sync_conn: Base.metadata.drop_all(sync_conn, checkfirst=True))
-        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True))
+        await conn.run_sync(Base.metadata.create_all)
     yield
     async with test_engine.begin() as conn:
-        await conn.run_sync(lambda sync_conn: Base.metadata.drop_all(sync_conn, checkfirst=True))
+        await conn.run_sync(Base.metadata.drop_all)
 
 
 async def override_get_session() -> AsyncIterator[AsyncSession]:

@@ -1,7 +1,7 @@
-"""OpenAI adapter (official `openai` SDK), kept behind the same interface.
+"""Gemini adapter (via Google AI Studio OpenAI-compatible endpoint).
 
-Deliberately uses `max_completion_tokens` (not the legacy `max_tokens`) and
-sends no `temperature`, since recent reasoning models reject both.
+Uses the official OpenAI SDK pointing to Google's Generative Language API endpoint:
+https://generativelanguage.googleapis.com/v1beta/openai/
 """
 from __future__ import annotations
 
@@ -25,14 +25,15 @@ from app.llm.base import (
 from app.llm.retry import with_retry
 
 
-class OpenAIProvider(LLMProvider):
-    name = "openai"
+class GeminiProvider(LLMProvider):
+    name = "gemini"
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
-        self.model = model or settings.openai_model
-        # Empty string would shadow OPENAI_API_KEY; see the Anthropic adapter.
+        self.model = model or settings.gemini_model
+        resolved_key = (api_key or settings.gemini_api_key) or None
         self._client = openai.AsyncOpenAI(
-            api_key=(api_key or settings.openai_api_key) or None
+            api_key=resolved_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         )
 
     def _to_wire(self, system: str, messages: list[Message]) -> list[dict[str, Any]]:
@@ -83,31 +84,14 @@ class OpenAIProvider(LLMProvider):
         ]
 
     @staticmethod
-    def _calls_from(choice: Any) -> list[ToolCall]:
-        """Parse tool calls off a chat-completion choice.
-
-        Shared with the open-model adapter, which speaks the same wire format.
-        """
-        return [
-            ToolCall(
-                id=tc.id,
-                name=tc.function.name,
-                # Never string-match serialized tool args - always parse.
-                arguments=json.loads(tc.function.arguments or "{}"),
-            )
-            for tc in (choice.message.tool_calls or [])
-            if getattr(tc, "function", None) is not None
-        ]
-
-    @staticmethod
     def _usage(response: Any) -> Usage:
-        usage = response.usage
+        usage = getattr(response, "usage", None)
+        if not usage:
+            return Usage()
         prompt = getattr(usage, "prompt_tokens", 0) or 0
         details = getattr(usage, "prompt_tokens_details", None)
         cached = getattr(details, "cached_tokens", 0) or 0
         return Usage(
-            # OpenAI's prompt_tokens *includes* cached tokens; Anthropic's does
-            # not. Subtract so the two providers report the same thing.
             input_tokens=max(0, prompt - cached),
             output_tokens=getattr(usage, "completion_tokens", 0) or 0,
             cache_read_tokens=cached,
@@ -122,12 +106,10 @@ class OpenAIProvider(LLMProvider):
         max_tokens: int = 8000,
         cache_prefix: bool = False,
     ) -> LLMResponse:
-        # `cache_prefix` is a no-op here: OpenAI caches long stable prefixes
-        # automatically, with no breakpoint to declare.
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": self._to_wire(system, messages),
-            "max_completion_tokens": max_tokens,
+            "max_tokens": max_tokens,
         }
         wire_tools = self._tools_to_wire(tools)
         if wire_tools:
@@ -135,12 +117,20 @@ class OpenAIProvider(LLMProvider):
 
         started = time.perf_counter()
         response, attempts = await with_retry(
-            lambda: self._create(kwargs), label=f"openai {self.model}"
+            lambda: self._create(kwargs), label=f"gemini {self.model}"
         )
         latency_ms = int((time.perf_counter() - started) * 1000)
 
         choice = response.choices[0]
-        calls = self._calls_from(choice)
+        calls = [
+            ToolCall(
+                id=tc.id,
+                name=tc.function.name,
+                arguments=json.loads(tc.function.arguments or "{}"),
+            )
+            for tc in (choice.message.tool_calls or [])
+            if getattr(tc, "function", None) is not None
+        ]
         return LLMResponse(
             text=(choice.message.content or "").strip(),
             tool_calls=calls,
@@ -162,7 +152,7 @@ class OpenAIProvider(LLMProvider):
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": self._to_wire(system, messages),
-            "max_completion_tokens": max_tokens,
+            "max_tokens": max_tokens,
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
@@ -175,7 +165,7 @@ class OpenAIProvider(LLMProvider):
 
         started = time.perf_counter()
         response, attempts = await with_retry(
-            lambda: self._create(kwargs), label=f"openai {self.model} (json)"
+            lambda: self._create(kwargs), label=f"gemini {self.model} (json)"
         )
         latency_ms = int((time.perf_counter() - started) * 1000)
 
@@ -199,16 +189,17 @@ class OpenAIProvider(LLMProvider):
         try:
             return await self._client.chat.completions.create(**kwargs)
         except openai.AuthenticationError as exc:
-            raise LLMError("OPENAI_API_KEY is missing or invalid.") from exc
+            raise LLMError("GEMINI_API_KEY is missing or invalid.") from exc
         except (TypeError, openai.OpenAIError) as exc:
-            raise LLMError(f"OpenAI client is not configured: {exc}") from exc
+            raise LLMError(f"Gemini client is not configured: {exc}") from exc
         except openai.RateLimitError as exc:
-            raise LLMTransientError(f"OpenAI rate limit: {exc}") from exc
+            raise LLMTransientError(f"Gemini rate limit: {exc}") from exc
         except openai.APIConnectionError as exc:
-            raise LLMTransientError(f"Could not reach the OpenAI API: {exc}") from exc
+            raise LLMTransientError(f"Could not reach the Gemini API: {exc}") from exc
         except openai.APIStatusError as exc:
             if exc.status_code >= 500:
                 raise LLMTransientError(
-                    f"OpenAI server error {exc.status_code}: {exc}"
+                    f"Gemini server error {exc.status_code}: {exc}"
                 ) from exc
-            raise LLMError(f"OpenAI API error {exc.status_code}: {exc}") from exc
+            raise LLMError(f"Gemini API error {exc.status_code}: {exc}") from exc
+

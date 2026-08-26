@@ -33,7 +33,17 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60 * 24 * 7
 
     # --- model providers ---------------------------------------------------
-    llm_provider: Literal["anthropic", "openai"] = "anthropic"
+    # Hosted APIs, plus any OpenAI-compatible server for open-weight models.
+    # Preset names double as base-URL shorthands (app/llm/openai_compatible.py).
+    llm_provider: Literal[
+        "anthropic", "openai", "gemini",
+        # open weights, your hardware
+        "ollama", "llamacpp", "lmstudio", "vllm",
+        # open weights, hosted
+        "openrouter", "groq", "together", "fireworks",
+        # any other OpenAI-compatible endpoint; needs OPEN_MODEL_BASE_URL
+        "open",
+    ] = "gemini"
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-opus-5"
     # Server-side refusal fallbacks (beta). Disable if your org lacks the beta.
@@ -41,6 +51,22 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     # Whatever chat-completions model your account has access to.
     openai_model: str = "gpt-5"
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3.6-flash"
+
+    # --- open-weight models (Ollama, vLLM, OpenRouter, Groq, ...) ----------
+    # Which server to talk to; defaults to LLM_PROVIDER when it names a preset.
+    open_model_preset: str | None = None
+    # Only needed for an endpoint that is not one of the known presets.
+    open_model_base_url: str | None = None
+    # Local servers ignore this; hosted ones require it.
+    open_model_api_key: str | None = None
+    # e.g. "llama3.1:8b" (Ollama), "meta-llama/llama-3.3-70b-instruct" (OpenRouter)
+    open_model_name: str = "llama3.1:8b"
+    # USD per 1M tokens. Zero is correct for a model on your own hardware - the
+    # approval gate should say $0.00, not guess a price.
+    open_model_price_input: float = 0.0
+    open_model_price_output: float = 0.0
 
     # --- search ------------------------------------------------------------
     tavily_api_key: str | None = None

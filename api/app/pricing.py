@@ -25,6 +25,12 @@ PRICES: dict[str, tuple[float, float]] = {
     "claude-sonnet-5": (2.00, 10.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-haiku-4-5": (1.00, 5.00),
+    # Gemini models (USD per 1M tokens)
+    "gemini-3.6-flash": (0.10, 0.40),
+    "gemini-2.5-flash": (0.10, 0.40),
+    "gemini-2.5-pro": (1.25, 5.00),
+    "gemini-1.5-flash": (0.075, 0.30),
+    "gemini-1.5-pro": (1.25, 5.00),
 }
 
 # OpenAI prices are not bundled here because they are not verifiable from this
@@ -37,13 +43,32 @@ FALLBACK_PRICE = (
 )
 
 
+def _configured_open_model_price(model: str) -> tuple[float, float] | None:
+    """Price for an open-weight model, if this is the configured one.
+
+    A model on your own hardware costs nothing per token, so the 0.0 default is
+    not a missing value - it is the right answer, and the approval gate should
+    show $0.00 rather than a guess.
+    """
+    from app.config import settings
+
+    if model and model == settings.open_model_name:
+        return (settings.open_model_price_input, settings.open_model_price_output)
+    return None
+
+
 def price_for(model: str) -> tuple[float, float]:
-    return PRICES.get(model, FALLBACK_PRICE)
+    if model in PRICES:
+        return PRICES[model]
+    configured = _configured_open_model_price(model)
+    if configured is not None:
+        return configured
+    return FALLBACK_PRICE
 
 
 def is_priced(model: str) -> bool:
     """False when we are guessing, so the UI can say so."""
-    return model in PRICES
+    return model in PRICES or _configured_open_model_price(model) is not None
 
 
 def cost_usd(

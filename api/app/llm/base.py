@@ -147,3 +147,29 @@ class LLMProvider(abc.ABC):
         max_tokens: int = 2000,
     ) -> tuple[dict[str, Any], LLMResponse]:
         """A turn constrained to `schema`, so no output parsing is needed."""
+
+
+def extract_json_object(text: str) -> dict[str, Any]:
+    """Best-effort JSON recovery from a model response.
+
+    Needed for backends without constrained decoding - many open-weight servers
+    support `json_object` but not a full JSON schema, and some support neither,
+    so the last resort is parsing what the model wrote.
+    """
+    import json
+    import re
+
+    cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start != -1 and end > start:
+        try:
+            return json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    raise LLMError("Model did not return usable JSON.")

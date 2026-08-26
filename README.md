@@ -313,6 +313,10 @@ returns a clean 503 rather than failing at boot.
 | `JWT_SECRET` | — | **Required in production.** `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
 | `LLM_PROVIDER` | `anthropic` | `anthropic` \| `openai` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | unset | Leave *unset*, not empty — see [the hardest bug](#the-hardest-bug) |
+| `OPEN_MODEL_NAME` | `llama3.1:8b` | Model id for an open-weight backend |
+| `OPEN_MODEL_BASE_URL` | unset | Only for endpoints that aren't a known preset |
+| `OPEN_MODEL_API_KEY` | unset | Local runtimes ignore it; hosted ones require it |
+| `OPEN_MODEL_PRICE_INPUT` / `_OUTPUT` | `0.0` | USD per 1M tokens; `0` is correct for local |
 | `TAVILY_API_KEY` | unset | Unset ⇒ stub search |
 | `MAX_SEARCHES_PER_TASK` | `8` | Hard cap per task |
 | `MAX_TOOL_ITERATIONS` | `12` | Hard cap per task |
@@ -320,6 +324,73 @@ returns a clean 503 rather than failing at boot.
 | `MAX_TASKS_PER_USER_PER_DAY` | `25` | Per-user quota |
 | `DATA_RETENTION_DAYS` | `0` | `0` keeps history forever — an explicit choice |
 | `AUTO_CREATE_SCHEMA` | `true` | Set `false` in production; Alembic owns the schema |
+
+---
+
+## Running on open-weight models
+
+The agent talks to models through one narrow interface
+([`app/llm/base.py`](api/app/llm/base.py)), so the backend is a config change,
+not a rewrite. Every way of serving open weights — Ollama, llama.cpp, vLLM,
+OpenRouter, Groq, Together — exposes the same OpenAI-compatible endpoint, so
+they share one adapter
+([`openai_compatible.py`](api/app/llm/openai_compatible.py)).
+
+### Free and local, via Ollama
+
+```bash
+brew install ollama && ollama serve
+ollama pull llama3.1:8b
+
+# api/.env
+LLM_PROVIDER=ollama
+OPEN_MODEL_NAME=llama3.1:8b
+```
+
+That's the whole change. No API key, no per-token cost — and the approval gate
+correctly shows **$0.00** rather than guessing a price, because a model on your
+own hardware genuinely costs nothing per token.
+
+### Hosted open weights
+
+```bash
+LLM_PROVIDER=openrouter          # or groq, together, fireworks
+OPEN_MODEL_NAME=meta-llama/llama-3.3-70b-instruct
+OPEN_MODEL_API_KEY=sk-or-...
+OPEN_MODEL_PRICE_INPUT=0.60      # so cost estimates are real, not guessed
+OPEN_MODEL_PRICE_OUTPUT=0.60
+```
+
+Any other OpenAI-compatible server works with `LLM_PROVIDER=open` plus
+`OPEN_MODEL_BASE_URL`.
+
+### What the adapter handles for you
+
+Hosted frontier APIs implement every optional feature; a local runtime often
+does not. Rather than demanding a lowest common denominator, the adapter probes
+and degrades, latching each result so the cost is one wasted request per
+process rather than one per call:
+
+| Capability | Chain |
+|---|---|
+| Structured output | `json_schema` → `json_object` + schema in the prompt → parse what the model wrote |
+| Token limit | `max_completion_tokens` → `max_tokens` |
+
+### Choosing a model
+
+**Tool calling is the requirement**, not parameter count — the research loop is
+a tool loop, and a model that cannot call `web_search` reliably cannot do the
+job however well it writes. Llama 3.1+, Qwen 2.5+, and Mistral-family
+instruct models support it; many smaller or older open models do not.
+
+Two honest caveats:
+
+- **Quality drops.** Smaller open models plan less well and are likelier to
+  invent citations. The citation audit will catch the invented ones — which
+  makes running an 8B model locally a rather good way to *see* the audit work.
+- **Verified against a stub, not a live model.** The adapter has 13 tests
+  including real HTTP round trips against a stub OpenAI-compatible server, but
+  it has not been run against an actual Ollama instance on this machine.
 
 ---
 
@@ -381,7 +452,8 @@ Then replace the "Live demo" line at the top of this README with the link.
 
 **Backend** FastAPI · SQLAlchemy 2.0 async · Alembic · Pydantic v2 · asyncpg ·
 arq · bcrypt + JWT · WeasyPrint
-**Models** Anthropic and OpenAI behind one provider-neutral interface — no
+**Models** Anthropic, OpenAI, Gemini, and any open-weight model behind one
+provider-neutral interface — no
 LangChain; the tool loop is [~150 lines you can read](api/app/agent/loop.py)
 **Search** Tavily, with a deterministic offline stub
 **Frontend** Next.js 16 App Router · React 19 · Tailwind CSS v4 · TypeScript

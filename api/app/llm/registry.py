@@ -18,4 +18,19 @@ def get_llm_provider(name: str | None = None) -> LLMProvider:
         from app.llm.openai_provider import OpenAIProvider
 
         return OpenAIProvider()
-    raise LLMError(f"Unknown LLM provider: {provider!r}")
+    if provider == "gemini":
+        from app.llm.gemini_provider import GeminiProvider
+
+        return GeminiProvider()
+    # Everything else is an OpenAI-compatible endpoint serving open weights.
+    from app.llm.openai_compatible import PRESETS, OpenAICompatibleProvider
+
+    if provider in PRESETS or provider == "open":
+        return OpenAICompatibleProvider(
+            preset=None if provider == "open" else provider
+        )
+
+    raise LLMError(
+        f"Unknown LLM provider: {provider!r}. Expected anthropic, openai, "
+        f"gemini, open, or one of: {', '.join(sorted(PRESETS))}."
+    )
