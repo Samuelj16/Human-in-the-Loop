@@ -50,6 +50,8 @@ mechanism, not a prompt instruction — which is why it can be trusted. See
 
 ![Human in the Loop System Architecture](docs/architecture-diagram.svg)
 
+<sub>Editable source: [`docs/architecture.excalidraw`](docs/architecture.excalidraw) — drag it onto [excalidraw.com](https://excalidraw.com) to edit, then re-export over `docs/architecture-diagram.svg`.</sub>
+
 ### End-to-End Data Flow
 
 ```mermaid
@@ -75,7 +77,7 @@ flowchart TD
 
     subgraph ext["🌐  External Services"]
         direction LR
-        LLM["Claude · GPT-4o · Gemini<br/>or Local Open Weights<br/>Provider-Neutral Adapter"]
+        LLM["Claude Opus 5 · GPT-5 · Gemini 3.6<br/>or Local Open Weights<br/>Provider-Neutral Adapter"]
         TAV["Tavily Search API<br/>(or Offline Stub)"]
     end
 
@@ -127,9 +129,9 @@ Because `TypeError` is a built-in Python standard library exception rather than 
 **The Three-Layer Defensive Solution:**
 To ensure this entire class of silent failure is impossible across all providers:
 
-1. **Sanitization at Configuration Boundary**: In `api/app/config.py`, all API key fields coerce empty strings `""` to `None`. This preserves standard SDK environment fallback (e.g., local profiles, OS environment variables) without passing poisoned empty strings.
+1. **Coercion at the adapter boundary**: every adapter resolves its key as `(api_key or settings.<provider>_api_key) or None` ([`anthropic_provider.py`](api/app/llm/anthropic_provider.py), [`openai_provider.py`](api/app/llm/openai_provider.py)), so an empty string becomes `None` and the SDK falls back to its own credential resolution (env var, CLI auth profile) instead of being handed a poisoned empty string. Regression-tested by `test_empty_api_key_does_not_shadow_sdk_credential_resolution`.
 2. **Comprehensive Exception Mapping in Adapters**: Wrapped provider constructor and creation logic to catch both vendor SDK errors and standard library exceptions (`TypeError`, `ValueError`), mapping them into actionable `LLMError("API key is missing or invalid...")`.
-3. **Broad Supervisor Safety Net**: Added an outer `except Exception` supervisor around background worker coroutines with dead-letter queue logging, guaranteeing that no matter what exception occurs, the database row is atomically transitioned to `status = 'failed'` with a human-readable diagnosis in the UI under 1 second.
+3. **Broad supervisor safety net**: both worker entry points in [`jobs.py`](api/app/jobs.py) close over an outer `except Exception` that logs the traceback and transitions the row to `status = 'failed'` with a human-readable error. Whatever escapes, the task cannot stay wedged in `planning` waiting on the reaper.
 
 ---
 
@@ -143,7 +145,7 @@ While MongoDB's document model is often chosen for rapid LLM prototyping, deep r
 | **Race-Free Gate Transitions**  | Conditional atomic update: `UPDATE research_tasks SET status = 'researching' WHERE id = :id AND status = 'awaiting_approval' RETURNING id`. Loser gets 0 rows and HTTP 409.             | `findOneAndUpdate` can do atomic updates, but lacks SQL's clean declarative constraint guarantees when coordinating cross-table state transitions.                                                         |
 | **Incremental Event Streaming** | `task_events` are appended as discrete rows with monotonic sequence IDs (`seq`). Polling with `WHERE task_id = :id AND seq > :cursor` is an indexed, sub-millisecond B-tree range scan. | Appending events to an embedded array inside a `task` document requires rewriting the entire document on every tool call and telemetry tick, causing document fragmentation and heavy write amplification. |
 | **Audit & Cost Analytics**      | Calculating token spend, cache hit ratios, and budget rollups is straightforward SQL: `SELECT model, SUM(cost_usd), SUM(input_tokens) FROM llm_turns GROUP BY model`.                   | Aggregation pipelines in Mongo require verbose multi-stage syntax for relational rollups across runs and users.                                                                                            |
-| **Hybrid Document Flexibility** | PostgreSQL provides native `JSONB` columns for unstructured data (draft plan steps, dynamic clarification Q&As, citation audit reports).                                                | Postgres gives the benefits of document storage (JSONB) without sacrificing relational guarantees, ACID transactions, or foreign keys.                                                                     |
+| **Hybrid document flexibility** | Native `JSONB` columns hold the genuinely unstructured parts (draft plan steps, clarification Q&As, citation audit reports) alongside typed relational columns.                        | This is the row where Mongo is closest to parity - schemaless storage is its home turf. The tiebreaker is that Postgres offers it *without* giving up foreign keys or cross-table ACID transactions.        |
 
 Schema migrations are managed strictly through **Alembic**, ensuring all database changes are tracked in version control, reversible, and auditable.
 
@@ -153,19 +155,34 @@ Schema migrations are managed strictly through **Alembic**, ensuring all databas
 
 Research agents run long multi-turn loops. To make the system fast, responsive, and cost-effective, five targeted performance optimizations were engineered:
 
-#### A. Prompt Prefix Caching (~29% Cost & Latency Reduction)
+#### A. Prompt prefix caching
 
-The system prompt and tool definitions (`SEARCH_TOOL`) remain byte-identical across every turn of a multi-step investigation. By placing static instructions and tool definitions at the prefix and applying provider cache breakpoints, subsequent turns read prompt tokens from cache at **10% of standard input pricing** with near-instant Time-To-First-Token (TTFT).
+The system prompt and tool definitions (`SEARCH_TOOL`) are byte-identical across every turn of a run, and they sit at the front of the prompt, so a cache breakpoint after them holds for the whole investigation. Anthropic bills a cache read at 0.1x the normal input rate; the adapter records `cache_read_tokens` separately on every turn, so the realised saving for any given run is visible in the `llm_turns` table rather than asserted here.
+
+> No end-to-end benchmark has been run. The mechanism is implemented and the per-turn cache counters are recorded; the aggregate saving is whatever those rows say for your workload.
 
 #### B. Parallel Tool Execution via `asyncio.gather`
 
 When an LLM generates multiple search queries in a single response turn (e.g. searching for 3 independent facts simultaneously), naive loops execute them sequentially ($3 \times 1.2\text{s} = 3.6\text{s}$). The engine runs all tool calls in parallel using `asyncio.gather` while maintaining exact wire-protocol index ordering:
 
 ```python
-tool_results = await asyncio.gather(*[
-    self._execute_tool(call, memo, source_ledger) for call in response.tool_calls
-])
+# api/app/agent/loop.py
+async def resolve(call: ToolCall) -> Message:
+    """Run one tool call and wrap the result for the model."""
+    if call.name != SEARCH_TOOL.name:
+        return tool_result_message(call, f"Unknown tool {call.name!r}.", is_error=True)
+    try:
+        text = await _run_search(call.arguments, search=search, budget=budget,
+                                 hooks=hooks, excluded_urls=excluded_urls, memo=memo)
+    except Exception as exc:  # report to the model, keep going
+        return tool_result_message(call, f"Tool failed: {exc}", is_error=True)
+    return tool_result_message(call, text)
+
+results = await asyncio.gather(*(resolve(call) for call in response.tool_calls))
+messages.extend(results)
 ```
+
+`asyncio.gather` preserves input order, which matters here for a protocol reason rather than a cosmetic one: each `tool_result` block has to line up with the `tool_use` id that requested it. A failing tool returns an error *result* instead of raising, so one bad search degrades a turn rather than ending the run.
 
 This collapses $N$ search operations into the latency of a single roundtrip.
 
@@ -188,13 +205,13 @@ If the agent issues duplicate search queries across iterative reasoning turns, t
 
 ## Testing
 
-**117 tests, all hermetic** — no API key, no network, no spend. The agent is
+**120 tests, all hermetic** — no API key, no network, no spend. The agent is
 driven by scripted fake providers, so the loop's guarantees are tested as
 properties of _our_ code rather than of a model's behaviour.
 
 ```bash
 cd api && .venv/bin/python -m pytest -q
-# 117 passed
+# 120 passed
 ```
 
 | Suite                     | Tests | What it pins down                                                                                                                              |
@@ -208,9 +225,9 @@ cd api && .venv/bin/python -m pytest -q
 | `test_reaper.py`          |    10 | Orphan detection, live runs left alone, retention purge                                                                                        |
 | `test_pricing.py`         |     7 | Cost maths, cache discount, estimate bounds, unpriced-model flagging                                                                           |
 | `test_citations.py`       |     6 | URL normalisation, invented-citation detection                                                                                                 |
-| `test_gemini_provider.py` |     5 | Gemini adapter wire format                                                                                                                     |
+| `test_gemini_provider.py` |     6 | Gemini adapter wire format                                                                                                                     |
 | `test_ratelimit.py`       |     4 | Sliding window, per-key isolation, window expiry                                                                                               |
-| `test_retry.py`           |     4 | Transient retried, fatal not retried, attempt accounting                                                                                       |
+| `test_retry.py`           |     6 | Transient retried, fatal not retried, attempt accounting                                                                                       |
 | `test_public.py`          |     3 | Public report visibility rules                                                                                                                 |
 
 The tests worth reading first are `test_approval_gate.py::test_concurrent_approvals_only_start_one_run`
@@ -374,6 +391,38 @@ entropy, no placeholder words. Generate one with:
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
+
+### The $0 path (no card, nothing expires)
+
+Three free tiers, chosen so nothing lapses under you:
+
+| Piece | Where | Why this one |
+|---|---|---|
+| Frontend | **Vercel** Hobby | Genuinely free. Personal/non-commercial only, which a portfolio piece satisfies. |
+| API | **Render** free web service | Docker, 750 instance-hours/month |
+| Database | **Neon** free Postgres | Permanent, no card. *Not* Render's free database — that one is deleted 30 days after creation and would quietly kill your demo link. |
+
+[`render.yaml`](render.yaml) declares the API service, so Render's
+**Blueprint** flow reads it and only asks for the secrets.
+
+1. **Neon** → create a project → copy the connection string.
+2. **Render** → New → Blueprint → pick this repo. Paste the Neon string into
+   `DATABASE_URL` as-is; the app rewrites the libpq-only parameters asyncpg
+   rejects ([`app/dburl.py`](api/app/dburl.py)). Add `GEMINI_API_KEY` and
+   `TAVILY_API_KEY`.
+3. **Vercel** → import repo, root directory `web`, set `API_URL` to the Render
+   URL.
+4. Put the Vercel URL into Render's `CORS_ORIGINS`.
+
+**Then stop it going to sleep.** Free Render services idle out after 15 minutes
+and take ~60 seconds to wake — a recruiter clicking a cold link stares at a
+blank page for a minute, which is worse than no link at all.
+[`.github/workflows/keep-warm.yml`](.github/workflows/keep-warm.yml) pings
+`/api/health` every 10 minutes to prevent that. Set a repository *variable*
+(not a secret) named `API_URL` to your Render URL and it starts working.
+
+A month is ~730 hours against a 750-hour allowance, so one always-on service
+fits — which is exactly why there is no separate worker service here.
 
 ### The smallest deploy that works: two services
 

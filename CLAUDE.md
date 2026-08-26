@@ -29,8 +29,9 @@ npm run dev
 ### 3. Run Automated Tests
 
 ```bash
-# From workspace root
-./api/.venv/bin/pytest -v
+# Must run from api/ - pytest.ini lives there, and without it
+# asyncio_mode is unset and ~65 async tests error out.
+cd api && .venv/bin/python -m pytest -v
 ```
 
 ### 4. Build Frontend for Production

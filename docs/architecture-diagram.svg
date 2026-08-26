@@ -132,7 +132,7 @@
     <g transform="translate(18, 202)">
       <rect width="414" height="60" rx="10" fill="#1e1b4b" stroke="#ec4899" stroke-width="1.5"/>
       <text x="207" y="24" text-anchor="middle" fill="#fbcfe8" font-size="12" font-weight="700">Redis 7 + Arq Message Broker</text>
-      <text x="207" y="44" text-anchor="middle" fill="#f472b6" font-size="10.5">Job Queue: [ plan_task ] ➔ [ run_task ] · Automatic Retry &amp; Dead-Letter</text>
+      <text x="207" y="44" text-anchor="middle" fill="#f472b6" font-size="10.5">Job Queue: [ plan_task ] ➔ [ run_task ] · Automatic Retry</text>
     </g>
 
     <!-- Autonomous Agent Execution Box -->
@@ -196,9 +196,9 @@
       <text x="107" y="24" text-anchor="middle" fill="#c7d2fe" font-size="12" font-weight="700">LLM Provider Layer</text>
       <text x="107" y="40" text-anchor="middle" fill="#818cf8" font-size="10">Provider-Neutral Adapter</text>
       <text x="20" y="62" fill="#cbd5e1" font-size="10">● Google Gemini 3.6 Flash / Pro</text>
-      <text x="20" y="78" fill="#cbd5e1" font-size="10">● Anthropic Claude 3.5 / Opus 5</text>
-      <text x="20" y="94" fill="#cbd5e1" font-size="10">● OpenAI GPT-4o / Open-Weights</text>
-      <text x="20" y="106" fill="#34d399" font-size="9" font-weight="600">✓ Prompt Caching Enabled (~29% savings)</text>
+      <text x="20" y="78" fill="#cbd5e1" font-size="10">● Anthropic Claude Opus 5</text>
+      <text x="20" y="94" fill="#cbd5e1" font-size="10">● OpenAI GPT-5 / Open-Weights</text>
+      <text x="20" y="106" fill="#34d399" font-size="9" font-weight="600">✓ Prompt Caching + Per-Turn Cache Counters</text>
     </g>
 
     <!-- External Search Box -->
@@ -207,7 +207,7 @@
       <text x="107" y="24" text-anchor="middle" fill="#bae6fd" font-size="12" font-weight="700">Web Search Engine</text>
       <text x="107" y="40" text-anchor="middle" fill="#38bdf8" font-size="10">Tavily API &amp; Mock Fallback</text>
       <text x="20" y="62" fill="#cbd5e1" font-size="10">● Parallel Async Search Queries</text>
-      <text x="20" y="78" fill="#cbd5e1" font-size="10">● Raw Content Extraction</text>
+      <text x="20" y="78" fill="#cbd5e1" font-size="10">● Snippets Only (no raw content)</text>
     </g>
   </g>
 

@@ -1,0 +1,41 @@
+# Render blueprint: the $0 deployment.
+#
+# One web service, no worker and no Redis - with REDIS_URL unset the jobs run
+# inside the API process. Postgres is deliberately NOT defined here: Render's
+# free database expires 30 days after creation and is then deleted, which would
+# quietly kill a portfolio link. Point DATABASE_URL at a Neon free database
+# instead, which is permanent.
+services:
+  - type: web
+    name: hitl-api
+    runtime: docker
+    rootDir: api
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      # Paste Neon's connection string verbatim - the app normalises the
+      # libpq-only parameters that asyncpg rejects (see app/dburl.py).
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true          # Render generates a strong value
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3-flash-preview
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false                  # your Vercel URL
+      - key: AUTO_CREATE_SCHEMA
+        value: "false"               # Alembic owns the schema
+      - key: ENVIRONMENT
+        value: production
+      # Gemini's free tier allows 5 requests/minute; keep a run inside it.
+      - key: MAX_TOOL_ITERATIONS
+        value: "4"
+      - key: MAX_SEARCHES_PER_TASK
+        value: "3"

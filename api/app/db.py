@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
+from app.dburl import normalize_database_url
 
 
 class Base(DeclarativeBase):
@@ -26,7 +27,10 @@ class Base(DeclarativeBase):
 # Global asynchronous database engine.
 # `pool_pre_ping=True` verifies connection liveness before checking out from the pool,
 # preventing stale connection errors after idle timeouts or database restarts.
-engine = create_async_engine(settings.database_url, pool_pre_ping=True, future=True)
+# Hosted providers hand out libpq-flavoured URLs; asyncpg needs them adjusted.
+DATABASE_URL = normalize_database_url(settings.database_url)
+
+engine = create_async_engine(DATABASE_URL, pool_pre_ping=True, future=True)
 
 # Asynchronous session factory.
 # `expire_on_commit=False` prevents attributes from being expired after commits,
