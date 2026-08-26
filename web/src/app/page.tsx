@@ -1,4 +1,20 @@
-/** Authenticated dashboard coordinating task creation, approval, and results. */
+/**
+ * Main Application Dashboard (`/app/page.tsx`).
+ *
+ * Core Architecture & Lifecycle Orchestration:
+ *   1. Authentication Resolution:
+ *      - On component mount, requests `/api/auth/me` to determine user session from `httpOnly` cookie.
+ *   2. Incremental Event Cursor Polling:
+ *      - While a task is active, polls `/api/tasks/{task_id}/events?after={cursor}`.
+ *      - New events are appended monotonically, keeping polling network bandwidth completely flat.
+ *      - Triggers full task reload (`fetchActiveTask`) strictly upon status transitions (e.g. `planning` -> `awaiting_approval`).
+ *   3. Main Viewport State Machine:
+ *      - No task selected -> `TaskCreator` (topic entry and example prompts).
+ *      - `awaiting_approval` -> `PlanApprovalGate` (interactive step editor, clarifications, and pricing preview).
+ *      - `queued` / `planning` / `researching` -> `LiveResearchTimeline` (streaming telemetry & source veto ledger).
+ *      - `complete` -> `ReportView` (synthesized findings, citation audit, and public sharing).
+ *      - `failed` / `cancelled` -> Terminal status summary with retry triggers.
+ */
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -11,6 +27,9 @@ import { ReportView } from "@/components/ReportView";
 import { TaskCreator } from "@/components/TaskCreator";
 import { TaskList } from "@/components/TaskList";
 
+/**
+ * Root Dashboard Component.
+ */
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
@@ -22,6 +41,9 @@ export default function Home() {
   const [cancellingTask, setCancellingTask] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
 
+  /**
+   * Refresh the sidebar task summary list from the server.
+   */
   const loadTasks = useCallback(async () => {
     setLoadingTasks(true);
     try {
@@ -46,7 +68,9 @@ export default function Home() {
       .catch(() => setUser(null));
   }, [loadTasks]);
 
-  // Fetch active task details
+  /**
+   * Fetch complete task detail by ID.
+   */
   const fetchActiveTask = useCallback(async (id: string) => {
     try {
       const detail = await api.tasks.get(id);
@@ -60,7 +84,9 @@ export default function Home() {
     }
   }, []);
 
-  // Set active task
+  /**
+   * Handle user selection of a task in the sidebar.
+   */
   const handleSelectTask = (id: string) => {
     setActiveTaskId(id);
     fetchActiveTask(id);
@@ -139,7 +165,9 @@ export default function Home() {
     };
   }, [activeTaskId, fetchActiveTask]);
 
-  // Create task
+  /**
+   * Create a new research task and transition viewport to planning state.
+   */
   const handleCreateTask = async (query: string) => {
     if (!user) {
       setIsAuthOpen(true);
@@ -162,7 +190,9 @@ export default function Home() {
     }
   };
 
-  // Approve plan
+  /**
+   * Approve plan and launch research run.
+   */
   const handleApprovePlan = async (
     plan: string[],
     answers: Record<string, string>
@@ -184,7 +214,9 @@ export default function Home() {
     }
   };
 
-  // Cancel task
+  /**
+   * Cancel task execution.
+   */
   const handleCancelTask = async () => {
     if (!activeTaskId) return;
     setCancellingTask(true);
@@ -203,7 +235,9 @@ export default function Home() {
     }
   };
 
-  // Toggle source exclusion
+  /**
+   * Toggle exclusion veto on a retrieved source.
+   */
   const handleToggleSource = async (sourceId: string) => {
     if (!activeTaskId) return;
     try {
@@ -214,7 +248,9 @@ export default function Home() {
     }
   };
 
-  // Toggle public share
+  /**
+   * Toggle public share link on a completed report.
+   */
   const handleToggleShare = async () => {
     if (!activeTaskId) return;
     try {
@@ -229,7 +265,9 @@ export default function Home() {
     }
   };
 
-  // Logout
+  /**
+   * Log out user and clear active task selection.
+   */
   const handleLogout = () => {
     api.auth.logout();
     setUser(null);
@@ -238,7 +276,9 @@ export default function Home() {
     setActiveTask(null);
   };
 
-  // Start new task
+  /**
+   * Reset active selection and open the task creator.
+   */
   const handleNewTask = () => {
     setActiveTaskId(null);
     setActiveTask(null);
@@ -331,3 +371,4 @@ export default function Home() {
     </div>
   );
 }
+

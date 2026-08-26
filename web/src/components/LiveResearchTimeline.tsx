@@ -1,26 +1,33 @@
 /**
- * Live view of a run in progress: what the agent searched, what it found, and
- * the controls to intervene.
+ * Live Research Timeline Component: in-flight progress telemetry and human intervention controls.
  *
- * Two forms of intervention live here, and both are the point of the project:
- * cancelling mid-run (the loop checks between turns), and vetoing a source so
- * later runs exclude it.
- *
- * Events arrive incrementally - the parent polls `/events?after=N` and appends -
- * so this component only ever renders what it is given.
+ * Real-time Telemetry & Intervention:
+ *   - Renders streaming thought messages, search queries, status updates, and errors as they arrive.
+ *   - Auto-scrolls along the bottom edge of the telemetry feed as new events are polled.
+ *   - Displays active source ledger with immediate human veto controls (`onToggleSource`).
+ *   - Vetoing a source excludes it from prompt context and citation credit.
+ *   - "Stop Agent" sends cancellation signal checked between turns in the Python agent loop.
  */
 "use client";
 
 import React, { useEffect, useRef } from "react";
 import { TaskDetail } from "@/lib/api";
 
+/** Props for LiveResearchTimeline component */
 interface LiveResearchTimelineProps {
+  /** Detailed task object currently in flight */
   task: TaskDetail;
+  /** Async callback to cancel task execution mid-run */
   onCancel: () => Promise<void>;
+  /** Async callback to toggle source exclusion veto */
   onToggleSource: (sourceId: string) => Promise<void>;
+  /** Whether a cancellation request is currently pending */
   cancelling: boolean;
 }
 
+/**
+ * Renders live research progress timeline, token telemetry, and source veto ledger.
+ */
 export function LiveResearchTimeline({
   task,
   onCancel,
@@ -36,6 +43,9 @@ export function LiveResearchTimeline({
     eventsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [task.events?.length]);
 
+  /**
+   * Return emoji icon reflecting event kind.
+   */
   const renderEventIcon = (kind: string) => {
     switch (kind) {
       case "search":
@@ -201,3 +211,4 @@ export function LiveResearchTimeline({
     </div>
   );
 }
+

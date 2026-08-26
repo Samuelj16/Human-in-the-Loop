@@ -70,6 +70,14 @@ class OpenAICompatibleProvider(OpenAIProvider):
         api_key: str | None = None,
         model: str | None = None,
     ) -> None:
+        """Initialize open-model adapter with preset or custom base URL.
+        
+        Args:
+            preset: Provider preset name (ollama, groq, openrouter, etc.).
+            base_url: Custom base URL override.
+            api_key: API key override.
+            model: Model identifier override.
+        """
         self.preset = (preset or settings.open_model_preset or "").lower()
         self.name = self.preset or "open-model"
         self.base_url = (
@@ -119,11 +127,13 @@ class OpenAICompatibleProvider(OpenAIProvider):
 
     # -- token-limit parameter naming --------------------------------------
     def _token_limit_kwargs(self, max_tokens: int) -> dict[str, Any]:
+        """Choose between max_completion_tokens and max_tokens depending on probed support."""
         if self._supports_max_completion_tokens:
             return {"max_completion_tokens": max_tokens}
         return {"max_tokens": max_tokens}
 
     async def _create(self, kwargs: dict[str, Any]):
+        """Send request to backend, falling back to max_tokens if max_completion_tokens is rejected."""
         try:
             return await super()._create(kwargs)
         except LLMError as exc:
@@ -259,6 +269,7 @@ class OpenAICompatibleProvider(OpenAIProvider):
         )
 
     def _to_response(self, response: Any, latency_ms: int, attempts: int) -> LLMResponse:
+        """Construct neutral LLMResponse from OpenAI response object."""
         choice = response.choices[0]
         calls = self._calls_from(choice)
         return LLMResponse(

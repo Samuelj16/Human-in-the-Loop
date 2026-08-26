@@ -35,7 +35,14 @@ class LLMTransientError(LLMError):
 
     A twelve-turn research run gets twelve chances to hit one of these, so
     treating them as fatal throws away most of a task's work.
+
+    `retry_after` carries the server's own stated delay when it gives one, which
+    is more accurate than any backoff curve we could guess at.
     """
+
+    def __init__(self, *args: object, retry_after: float | None = None) -> None:
+        super().__init__(*args)
+        self.retry_after = retry_after
     pass
 
 

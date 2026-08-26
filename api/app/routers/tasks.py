@@ -1,4 +1,17 @@
-"""Task lifecycle management endpoints."""
+"""Task lifecycle router (`/api/tasks`).
+
+End-to-end task execution workflow:
+  1. `POST /api/tasks`: Create inquiry, check per-user daily quota, enqueue `plan_task`.
+  2. `GET /api/tasks`: List user's tasks ordered by timestamp descending.
+  3. `GET /api/tasks/{task_id}`: Full task detail with timeline events, sources, and citation audit.
+  4. `POST /api/tasks/{task_id}/approve`: Concurrency-safe plan approval gate with atomic SQL UPDATE.
+  5. `POST /api/tasks/{task_id}/cancel`: User cancellation trigger between agent turns.
+  6. `POST /api/tasks/{task_id}/sources/{source_id}/toggle`: Source exclusion veto toggle.
+  7. `POST /api/tasks/{task_id}/share`: Toggle public sharing URL.
+  8. `GET /api/tasks/{task_id}/events`: Monotonic cursor polling (`?after={seq}`) for low-bandwidth telemetry.
+  9. `GET / POST /api/tasks/{task_id}/estimate`: Dynamic pre-flight pricing calculations.
+  10. `GET /api/tasks/{task_id}/pdf`: WeasyPrint PDF report generation and binary download.
+"""
 from __future__ import annotations
 
 import uuid
@@ -37,10 +50,21 @@ async def create_task(
     # Public deployments also need an atomic quota tied to a non-self-issued
     # tenant/billing entitlement; new accounts and concurrent requests can bypass
     # this count before paid planning work is enqueued below.
-    """Create a research task and start plan drafting.
+    """Create a research task and start plan drafting in the background.
 
-    Returns immediately; the plan is drafted in the background and the task lands
-    in `awaiting_approval`. Subject to the per-user daily cap.
+    Returns immediately; the plan is drafted asynchronously and the task lands
+    in `awaiting_approval`. Subject to the per-user daily quota cap.
+    
+    Args:
+        body: Inquiry question payload.
+        user: Authenticated user dependency.
+        session: Scoped database session.
+        
+    Returns:
+        ResearchTask: Newly created task record in QUEUED status.
+        
+    Raises:
+        HTTPException (429): If the user exceeded max_tasks_per_user_per_day.
     """
     today_start = datetime.combine(
         datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc
@@ -72,7 +96,15 @@ async def create_task(
 
 @router.get("", response_model=list[TaskSummary])
 async def list_tasks(user: CurrentUser, session: SessionDep) -> list[ResearchTask]:
-    """List this user's tasks, newest first."""
+    """List this user's tasks, ordered newest first for sidebar display.
+    
+    Args:
+        user: Authenticated user.
+        session: Database session.
+        
+    Returns:
+        list[ResearchTask]: User's task summaries.
+    """
     result = await session.scalars(
         select(ResearchTask)
         .where(ResearchTask.user_id == user.id)
@@ -85,10 +117,21 @@ async def list_tasks(user: CurrentUser, session: SessionDep) -> list[ResearchTas
 async def get_task(
     task_id: str, user: CurrentUser, session: SessionDep
 ) -> ResearchTask:
-    """Full task detail: plan, events, sources, and the citation audit.
+    """Full task detail including plan, events, sources, and the citation audit.
 
     Prefer `/events?after=N` while a run is in flight - this returns the entire
-    history every time.
+    history on every fetch.
+    
+    Args:
+        task_id: Target task ID.
+        user: Authenticated user.
+        session: Database session.
+        
+    Returns:
+        ResearchTask: Detailed task object with eagerly loaded relationships.
+        
+    Raises:
+        HTTPException (404): If task does not exist or belongs to another user.
     """
     result = await session.scalars(
         select(ResearchTask)
@@ -111,11 +154,25 @@ async def approve_plan(
     user: CurrentUser,
     session: SessionDep,
 ) -> ResearchTask:
-    """Approve a drafted plan and start the research run.
+    """Approve a drafted plan and dispatch the autonomous research loop.
 
-    The gate: this is the call that authorises spending money, so the status
-    check is only advisory and the real transition is a conditional UPDATE the
+    The gate: this call authorises spending money, so the status check is only
+    advisory and the real state transition is an atomic conditional UPDATE the
     database arbitrates. Two concurrent clicks cannot buy two runs.
+    
+    Args:
+        task_id: Task ID to approve.
+        body: Approved/edited plan steps and clarification answers.
+        user: Authenticated user.
+        session: Database session.
+        
+    Returns:
+        ResearchTask: Task transitioned to RESEARCHING.
+        
+    Raises:
+        HTTPException (404): If task not found.
+        HTTPException (400): If status is not awaiting_approval.
+        HTTPException (409): If plan was already approved by a concurrent request.
     """
     task = await session.get(ResearchTask, task_id)
     if task is None or task.user_id != user.id:
@@ -134,10 +191,8 @@ async def approve_plan(
             detail="The plan must contain at least one step.",
         )
 
-    # This is the gate that authorises spending money, so the status check above
-    # is only advisory - two clients can both pass it. The transition itself is
-    # done as a conditional UPDATE, and the database decides who wins. The loser
-    # gets a 409 instead of silently enqueueing a second, duplicate research run.
+    # Concurrency Protection: Conditional UPDATE WHERE status = 'awaiting_approval'.
+    # Database guarantees exactly one caller succeeds; loser gets 409 Conflict.
     result = await session.execute(
         update(ResearchTask)
         .where(
@@ -164,7 +219,7 @@ async def approve_plan(
     await session.commit()
     await session.refresh(task)
 
-    # Enqueued only after the winning transition is durable.
+    # Enqueued only after winning database transition is durable
     await enqueue("run_task", task.id)
     return task
 
@@ -173,7 +228,16 @@ async def approve_plan(
 async def cancel_task(
     task_id: str, user: CurrentUser, session: SessionDep
 ) -> ResearchTask:
-    """Cancel a task. The agent loop checks between turns and stops."""
+    """Cancel a running or queued task. The agent loop checks cancellation between turns and halts.
+    
+    Args:
+        task_id: Task ID to cancel.
+        user: Authenticated user.
+        session: Database session.
+        
+    Returns:
+        ResearchTask: Updated task record.
+    """
     task = await session.get(ResearchTask, task_id)
     if task is None or task.user_id != user.id:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -194,7 +258,17 @@ async def toggle_source_exclusion(
     user: CurrentUser,
     session: SessionDep,
 ) -> Source:
-    """Veto (or un-veto) a source, excluding it from later runs."""
+    """Veto (or un-veto) a retrieved source, excluding it from prompting and citation credit.
+    
+    Args:
+        task_id: Associated research task ID.
+        source_id: Unique source identifier.
+        user: Authenticated user.
+        session: Database session.
+        
+    Returns:
+        Source: Updated Source record.
+    """
     task = await session.get(ResearchTask, task_id)
     if task is None or task.user_id != user.id:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -215,7 +289,16 @@ async def toggle_source_exclusion(
 async def toggle_share(
     task_id: str, user: CurrentUser, session: SessionDep
 ) -> ResearchTask:
-    """Toggle the public share link for a finished report."""
+    """Toggle public sharing visibility and generate share link UUID for finished reports.
+    
+    Args:
+        task_id: Research task ID.
+        user: Authenticated user.
+        session: Database session.
+        
+    Returns:
+        ResearchTask: Updated task with share_id and is_public flag.
+    """
     task = await session.get(ResearchTask, task_id)
     if task is None or task.user_id != user.id:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -235,20 +318,29 @@ async def toggle_share(
     return task
 
 
-
 @router.get("/{task_id}/events", response_model=EventsPage)
 async def get_events(
     task_id: str,
     user: CurrentUser,
     session: SessionDep,
-    after: int = Query(0, ge=0, description="Return events with seq greater than this"),
+    after: int = Query(0, ge=0, description="Return events with seq greater than this cursor"),
     limit: int = Query(200, ge=1, le=500),
 ) -> EventsPage:
-    """Incremental progress feed.
+    """Incremental progress feed using monotonic sequence cursors.
 
     Polling the full task resends every event and source on every tick, so the
     payload grows with the run. This returns only what the client has not seen,
-    which keeps a long research run's polling cost flat.
+    which keeps a long research run's polling bandwidth flat.
+    
+    Args:
+        task_id: Target task ID.
+        user: Authenticated user.
+        session: Database session.
+        after: Sequence cursor offset.
+        limit: Max events per chunk.
+        
+    Returns:
+        EventsPage: Page of new events and running telemetry counters.
     """
     task = await session.get(ResearchTask, task_id)
     if task is None or task.user_id != user.id:
@@ -283,8 +375,16 @@ async def get_estimate(
     user: CurrentUser,
     session: SessionDep,
 ) -> CostEstimateOut:
-    """What the current plan would cost to run - recomputed on the fly so the
-    number responds to the user's edits before they approve."""
+    """Recompute projected dollar cost for the current drafted plan in real-time.
+    
+    Args:
+        task_id: Research task ID.
+        user: Authenticated user.
+        session: Database session.
+        
+    Returns:
+        CostEstimateOut: Calculated dollar cost bounds and projections.
+    """
     task = await session.get(ResearchTask, task_id)
     if task is None or task.user_id != user.id:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -305,7 +405,17 @@ async def estimate_candidate_plan(
     user: CurrentUser,
     session: SessionDep,
 ) -> CostEstimateOut:
-    """Price a plan the user is still editing, before they commit to it."""
+    """Price a candidate plan currently being edited by the user in the UI before committing.
+    
+    Args:
+        task_id: Research task ID.
+        body: Candidate plan steps list.
+        user: Authenticated user.
+        session: Database session.
+        
+    Returns:
+        CostEstimateOut: Price estimate for candidate plan.
+    """
     task = await session.get(ResearchTask, task_id)
     if task is None or task.user_id != user.id:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -327,6 +437,14 @@ async def download_pdf(
 
     Returns 503 when the image lacks WeasyPrint's system libraries, rather than
     failing at boot.
+    
+    Args:
+        task_id: Research task ID.
+        user: Authenticated user.
+        session: Database session.
+        
+    Returns:
+        Response: Binary PDF stream with Content-Disposition attachment header.
     """
     from app.pdf import PDFUnavailable, render_report_pdf
 
@@ -348,3 +466,4 @@ async def download_pdf(
             "Content-Disposition": f'attachment; filename="report-{task.id[:8]}.pdf"'
         },
     )
+

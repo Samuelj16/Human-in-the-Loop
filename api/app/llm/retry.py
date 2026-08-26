@@ -6,7 +6,10 @@ or dropped connections.
 
 Key Features:
   - Caps maximum retry attempts (`MAX_ATTEMPTS = 4`).
-  - Bounds retry delay to `MAX_DELAY_SECONDS = 20.0`.
+  - Bounds retry delay to `MAX_DELAY_SECONDS = 20.0
+# A server-stated delay may legitimately exceed our own cap (free-tier quotas
+# reset on the minute), but not without bound.
+SERVER_DELAY_CAP_SECONDS = 65.0`.
   - Injects randomized multiplicative jitter (0.5x to 1.5x).
   - Returns total attempts along with the result for turn-level telemetry logging.
 """
@@ -30,6 +33,9 @@ MAX_ATTEMPTS = 4
 BASE_DELAY_SECONDS = 1.0
 # Upper bound cap on backoff sleep duration
 MAX_DELAY_SECONDS = 20.0
+# A server-stated delay may legitimately exceed our own cap (free-tier quotas
+# reset on the minute), but not without bound.
+SERVER_DELAY_CAP_SECONDS = 65.0
 
 
 async def with_retry(
@@ -66,6 +72,13 @@ async def with_retry(
             # Calculate exponential backoff with jitter
             delay = min(BASE_DELAY_SECONDS * 2 ** (attempt - 1), MAX_DELAY_SECONDS)
             delay *= 0.5 + random.random()  # jitter: avoid a retry thundering herd
+
+            # A server that tells us when to come back knows better than our
+            # curve does - a free-tier quota resets on a fixed window, and
+            # retrying early just burns another attempt on the same 429.
+            stated = getattr(exc, "retry_after", None)
+            if stated:
+                delay = max(delay, min(float(stated) + 1.0, SERVER_DELAY_CAP_SECONDS))
             log.warning(
                 "%s failed (attempt %d/%d): %s - retrying in %.1fs",
                 label, attempt, max_attempts, exc, delay,

@@ -12,6 +12,7 @@ Features:
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -29,6 +30,31 @@ from app.llm.base import (
     Usage,
 )
 from app.llm.retry import with_retry
+
+
+def _retry_after_from(exc: Exception) -> float | None:
+    """Pull the server's own retry delay out of a 429.
+
+    Gemini reports a precise delay ("Please retry in 31.08s"); honouring it
+    beats guessing, because free-tier quotas reset on a fixed window that our
+    exponential backoff would otherwise undershoot.
+    """
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    if headers:
+        raw = headers.get("retry-after")
+        if raw:
+            try:
+                return float(raw)
+            except ValueError:
+                pass
+
+    match = re.search(r"retry in ([\d.]+)s", str(exc))
+    if match:
+        return float(match.group(1))
+    match = re.search(r"'retryDelay': '(\d+)s'", str(exc))
+    if match:
+        return float(match.group(1))
+    return None
 
 
 class GeminiProvider(LLMProvider):
@@ -61,6 +87,18 @@ class GeminiProvider(LLMProvider):
             if msg.role == "user":
                 wire.append({"role": "user", "content": msg.content})
             elif msg.role == "assistant":
+                if msg.provider_raw is not None:
+                    # Gemini 3 requires the `thought_signature` it attached to a
+                    # function call to come back unchanged on the next turn;
+                    # without it the API rejects the request with a 400. That
+                    # signature lives in a non-standard `extra_content` field, so
+                    # rebuilding the message from our neutral types would drop it.
+                    # Replaying Gemini's own message verbatim keeps it intact -
+                    # the same reason the Anthropic adapter replays its thinking
+                    # blocks rather than reconstructing them.
+                    wire.append(msg.provider_raw)
+                    continue
+
                 entry: dict[str, Any] = {
                     "role": "assistant",
                     "content": msg.content or None,
@@ -158,6 +196,9 @@ class GeminiProvider(LLMProvider):
             tool_calls=calls,
             stop_reason="tool_use" if calls else (choice.finish_reason or "end_turn"),
             usage=self._usage(response),
+            # Kept so the next turn can echo this message back exactly, including
+            # the thought_signature Gemini requires on function calls.
+            provider_raw=choice.message.model_dump(exclude_none=True),
             latency_ms=latency_ms,
             attempts=attempts,
             model=self.model,
@@ -212,12 +253,15 @@ class GeminiProvider(LLMProvider):
         """Send chat completion request with mapped error handling."""
         try:
             return await self._client.chat.completions.create(**kwargs)
+        # Order matters: RateLimitError, APIConnectionError and APIStatusError
+        # are all subclasses of OpenAIError, so a broad `except OpenAIError`
+        # placed first would swallow them and make every rate limit fatal.
         except openai.AuthenticationError as exc:
             raise LLMError("GEMINI_API_KEY is missing or invalid.") from exc
-        except (TypeError, openai.OpenAIError) as exc:
-            raise LLMError(f"Gemini client is not configured: {exc}") from exc
         except openai.RateLimitError as exc:
-            raise LLMTransientError(f"Gemini rate limit: {exc}") from exc
+            raise LLMTransientError(
+                f"Gemini rate limit: {exc}", retry_after=_retry_after_from(exc)
+            ) from exc
         except openai.APIConnectionError as exc:
             raise LLMTransientError(f"Could not reach the Gemini API: {exc}") from exc
         except openai.APIStatusError as exc:
@@ -226,5 +270,7 @@ class GeminiProvider(LLMProvider):
                     f"Gemini server error {exc.status_code}: {exc}"
                 ) from exc
             raise LLMError(f"Gemini API error {exc.status_code}: {exc}") from exc
+        except (TypeError, openai.OpenAIError) as exc:
+            raise LLMError(f"Gemini client is not configured: {exc}") from exc
 
 

@@ -1,23 +1,33 @@
 /**
- * Sidebar of past and in-flight research tasks.
+ * Sidebar Component: displays historical and currently active research tasks.
  *
- * Deliberately fed by the summary endpoint rather than full task detail: this
- * list is re-rendered on every poll tick, and pulling each task's whole event
- * log to draw a row would make polling cost grow with history.
+ * Performance Architecture:
+ *   - Consumes lightweight `TaskSummary` records from `/api/tasks` rather than full task details.
+ *   - Allows rapid UI updates on polling ticks without repeatedly downloading full event logs or reports.
+ *   - Highlights active task selection and renders animated status badges ("Needs Review", "Searching...").
  */
 "use client";
 
 import React from "react";
 import { TaskStatus, TaskSummary } from "@/lib/api";
 
+/** Props for TaskList sidebar component */
 interface TaskListProps {
+  /** List of user tasks sorted newest first */
   tasks: TaskSummary[];
+  /** Currently selected task ID or null if viewing task creator */
   activeTaskId: string | null;
+  /** Callback when user selects a task row */
   onSelectTask: (taskId: string) => void;
+  /** Callback when user clicks New Query button */
   onNewTask: () => void;
+  /** Initial loading indicator flag */
   loading: boolean;
 }
 
+/**
+ * Renders the scrollable sidebar list of user research tasks with status indicators.
+ */
 export function TaskList({
   tasks,
   activeTaskId,
@@ -25,6 +35,9 @@ export function TaskList({
   onNewTask,
   loading,
 }: TaskListProps) {
+  /**
+   * Render color-coded pill badge corresponding to task lifecycle state.
+   */
   const getStatusBadge = (status: TaskStatus) => {
     switch (status) {
       case "awaiting_approval":
@@ -74,6 +87,7 @@ export function TaskList({
 
   return (
     <aside className="w-full sm:w-80 shrink-0 border-r border-zinc-800/80 bg-zinc-950/60 flex flex-col h-[calc(100vh-61px)]">
+      {/* Sidebar header */}
       <div className="p-4 border-b border-zinc-800/80 flex items-center justify-between">
         <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
           Research History
@@ -86,6 +100,7 @@ export function TaskList({
         </button>
       </div>
 
+      {/* Task list rows */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
         {loading && tasks.length === 0 ? (
           <div className="p-4 text-center text-xs text-zinc-500">
@@ -132,3 +147,4 @@ export function TaskList({
     </aside>
   );
 }
+

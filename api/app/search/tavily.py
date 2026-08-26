@@ -1,4 +1,4 @@
-"""Tavily search client."""
+"""Tavily search client adapter."""
 from __future__ import annotations
 
 import httpx
@@ -15,24 +15,43 @@ class SearchError(RuntimeError):
 
 
 class TavilySearch(SearchClient):
-    """Tavily client.
+    """Tavily search client adapter.
 
-    Tries bearer auth first and falls back to the older body-field key, so a key
-    of either vintage works without configuration.
+    Provides structured web research search results tailored for agentic workflows
+    via Tavily's REST API (`https://api.tavily.com/search`).
     """
     name = "tavily"
 
     def __init__(self, api_key: str | None = None) -> None:
+        """Initialize Tavily search client.
+        
+        Args:
+            api_key: Optional explicit API key. Defaults to settings.tavily_api_key.
+        """
         self._api_key = api_key or settings.tavily_api_key
+
+    async def search(self, query: str, *, max_results: int = 5) -> list[SearchResult]:
+        """Execute a web search against Tavily.
+        
+        Args:
+            query: The search inquiry string.
+            max_results: Max hits to request (default 5).
+            
+        Returns:
+            list[SearchResult]: Parsed search hits.
+            
+        Raises:
+            SearchError: If configuration is missing or request fails.
+        """
         if not self._api_key:
             raise SearchError("TAVILY_API_KEY is not set")
 
-    async def search(self, query: str, *, max_results: int = 5) -> list[SearchResult]:
-        """Run one search and return the hits, raising SearchError on failure."""
         payload = {
             "query": query,
             "max_results": max_results,
             "search_depth": "basic",
+            "include_answer": False,
+            "include_raw_content": False,
         }
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
@@ -60,3 +79,4 @@ class TavilySearch(SearchClient):
             for item in body.get("results", [])
             if item.get("url")
         ]
+

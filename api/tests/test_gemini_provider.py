@@ -93,3 +93,37 @@ async def test_gemini_provider_complete_json(monkeypatch):
     assert res.usage.input_tokens == 50
     assert res.usage.output_tokens == 25
 
+
+
+async def test_rate_limit_is_transient_not_fatal():
+    """Regression: a 429 must be retryable.
+
+    `RateLimitError` subclasses `OpenAIError`, so a broad `except OpenAIError`
+    placed above the specific handlers silently made every rate limit fatal and
+    left the specific clauses unreachable. A research run makes many calls in
+    quick succession, so on a free tier this failed almost every task.
+    """
+    import httpx2 as httpx
+    import openai
+    import pytest
+
+    from app.llm.base import LLMError, LLMTransientError
+    from app.llm.gemini_provider import GeminiProvider
+
+    provider = GeminiProvider(api_key="fake-key", model="gemini-3-flash-preview")
+
+    request = httpx.Request("POST", "https://example.invalid/v1/chat/completions")
+    response = httpx.Response(429, request=request, headers={"retry-after": "31"})
+
+    async def boom(**kwargs):
+        raise openai.RateLimitError(
+            "quota exceeded. Please retry in 31.0s", response=response, body=None
+        )
+
+    provider._client.chat.completions.create = boom
+
+    with pytest.raises(LLMTransientError) as exc:
+        await provider._create({})
+
+    assert not isinstance(exc.value, LLMError) or isinstance(exc.value, LLMTransientError)
+    assert exc.value.retry_after == 31.0

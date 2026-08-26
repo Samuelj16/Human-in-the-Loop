@@ -64,3 +64,37 @@ async def test_fatal_errors_are_not_retried():
         await with_retry(op)
 
     assert calls["n"] == 1
+
+
+async def test_server_stated_delay_is_honoured(monkeypatch):
+    """A 429 that says "retry in 31s" must not be retried after 2s.
+
+    Free-tier quotas reset on a fixed window, so retrying early just burns
+    another attempt on the same rejection.
+    """
+    slept: list[float] = []
+
+    async def record(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("app.llm.retry.asyncio.sleep", record)
+
+    calls = {"n": 0}
+
+    async def op():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise LLMTransientError("rate limited", retry_after=31.0)
+        return "ok"
+
+    result, attempts = await with_retry(op)
+
+    assert result == "ok" and attempts == 2
+    assert slept and slept[0] >= 31.0, f"waited only {slept[0]:.1f}s"
+
+
+async def test_server_stated_delay_is_capped():
+    """An absurd server delay must not hang the worker indefinitely."""
+    from app.llm.retry import SERVER_DELAY_CAP_SECONDS
+
+    assert SERVER_DELAY_CAP_SECONDS <= 120

@@ -2,6 +2,14 @@
 
 Deliberately uses `max_completion_tokens` (not the legacy `max_tokens`) and
 sends no `temperature`, since recent reasoning models reject both.
+
+Design Notes:
+  - Base Class for OpenAI-Compatible Endpoints: Inherited by `OpenAICompatibleProvider`.
+  - Token Accounting Reconciliation: OpenAI's `prompt_tokens` includes cached tokens,
+    whereas Anthropic separates them. This adapter subtracts cached tokens from input_tokens
+    so both providers report normalized, comparable metrics.
+  - Automatic Prompt Caching: OpenAI automatically caches stable prefixes without needing
+    explicit breakpoint markers.
 """
 from __future__ import annotations
 
@@ -34,6 +42,12 @@ class OpenAIProvider(LLMProvider):
     name = "openai"
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
+        """Initialize the OpenAI client.
+        
+        Args:
+            api_key: Optional explicit API key override. Defaults to settings.openai_api_key.
+            model: Optional model override. Defaults to settings.openai_model.
+        """
         self.model = model or settings.openai_model
         # Empty string would shadow OPENAI_API_KEY; see the Anthropic adapter.
         self._client = openai.AsyncOpenAI(
@@ -41,6 +55,7 @@ class OpenAIProvider(LLMProvider):
         )
 
     def _to_wire(self, system: str, messages: list[Message]) -> list[dict[str, Any]]:
+        """Translate neutral Message list to OpenAI chat completion message format."""
         wire: list[dict[str, Any]] = [{"role": "system", "content": system}]
         for msg in messages:
             if msg.role == "user":
@@ -75,6 +90,7 @@ class OpenAIProvider(LLMProvider):
 
     @staticmethod
     def _tools_to_wire(tools: list[ToolSpec] | None) -> list[dict[str, Any]]:
+        """Translate neutral ToolSpecs to OpenAI functions schema definitions."""
         return [
             {
                 "type": "function",
@@ -106,6 +122,7 @@ class OpenAIProvider(LLMProvider):
 
     @staticmethod
     def _usage(response: Any) -> Usage:
+        """Extract and normalize token usage from OpenAI response object."""
         usage = response.usage
         prompt = getattr(usage, "prompt_tokens", 0) or 0
         details = getattr(usage, "prompt_tokens_details", None)
@@ -203,6 +220,7 @@ class OpenAIProvider(LLMProvider):
         )
 
     async def _create(self, kwargs: dict[str, Any]):
+        """Send chat completion request to OpenAI API with mapped error classifications."""
         try:
             return await self._client.chat.completions.create(**kwargs)
         except openai.AuthenticationError as exc:
@@ -219,3 +237,4 @@ class OpenAIProvider(LLMProvider):
                     f"OpenAI server error {exc.status_code}: {exc}"
                 ) from exc
             raise LLMError(f"OpenAI API error {exc.status_code}: {exc}") from exc
+

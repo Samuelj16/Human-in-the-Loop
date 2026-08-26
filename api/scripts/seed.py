@@ -1,4 +1,11 @@
-"""Seed script to create a default demo user and sample research task."""
+"""Seed script to populate initial database records for development and testing.
+
+Workflow:
+  1. Initializes database tables if not present via `init_db()`.
+  2. Creates a default demo user account (`samuel@example.com` / `password123`).
+  3. Inserts a realistic completed sample research task with timeline events,
+     retrieved source references, telemetry, and a Markdown report.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -14,12 +21,14 @@ if str(api_root) not in sys.path:
     sys.path.insert(0, str(api_root))
 
 from sqlalchemy import select
+
 from app.db import SessionLocal, init_db
 from app.models import ResearchTask, Source, TaskEvent, TaskStatus, User
 from app.security import hash_password
 
 
-async def seed():
+async def seed() -> None:
+    """Execute the database seeding routine."""
     print("Initializing database schema...")
     await init_db()
 
@@ -40,6 +49,7 @@ async def seed():
         else:
             print(f"Demo user {email} already exists.")
             user = existing_user
+
 
         # Check if sample task exists
         existing_task = await session.scalar(

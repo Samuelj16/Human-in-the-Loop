@@ -1,18 +1,26 @@
 /**
- * The entry point: where a research question is written.
+ * Task Creation View: initial input interface for research inquiries.
  *
- * Submitting does not start any research - it starts *planning*, which stops at
- * the approval gate. Nothing is spent until the person approves the plan there.
+ * Workflow:
+ *   - The user inputs a research topic or selects an example prompt.
+ *   - Submitting triggers the background planner job (`plan_task`), creating a task record
+ *     in `queued` / `planning` state.
+ *   - Autonomous search execution does NOT begin immediately; the flow halts at the
+ *     PlanApprovalGate, giving the user complete editorial control and transparent cost visibility.
  */
 "use client";
 
 import React, { useState } from "react";
 
+/** Props for TaskCreator component */
 interface TaskCreatorProps {
+  /** Async callback invoked with query string to create the task */
   onSubmit: (query: string) => Promise<void>;
+  /** Whether the creation/planning request is currently pending */
   loading: boolean;
 }
 
+/** Pre-populated example research inquiries */
 const SAMPLE_PROMPTS = [
   "Current state of solid-state battery commercial readiness and production timelines (2026)",
   "Comparative analysis of Post-Quantum Cryptography standards: ML-KEM vs SLH-DSA adoption",
@@ -20,9 +28,15 @@ const SAMPLE_PROMPTS = [
   "Breakthroughs in non-invasive neural interface bandwidth and clinical trial status",
 ];
 
+/**
+ * Renders the research inquiry entry box with keyboard shortcuts and example suggestions.
+ */
 export function TaskCreator({ onSubmit, loading }: TaskCreatorProps) {
   const [query, setQuery] = useState("");
 
+  /**
+   * Submit inquiry handler with duplicate-submission protection.
+   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     // Guard against double submission: a second click while the first request
@@ -33,6 +47,7 @@ export function TaskCreator({ onSubmit, loading }: TaskCreatorProps) {
 
   return (
     <div className="w-full max-w-3xl mx-auto py-12 px-4">
+      {/* Header text */}
       <div className="text-center mb-8">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-950/80 border border-indigo-800/60 text-indigo-400 text-xs font-medium mb-4">
           <span className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse" />
@@ -46,6 +61,7 @@ export function TaskCreator({ onSubmit, loading }: TaskCreatorProps) {
         </p>
       </div>
 
+      {/* Inquiry input form */}
       <form onSubmit={handleSubmit} className="mb-8">
         <div className="relative rounded-2xl bg-zinc-900 border border-zinc-800 p-2 shadow-2xl focus-within:border-indigo-500/80 focus-within:ring-1 focus-within:ring-indigo-500/50 transition-all">
           <textarea
@@ -91,6 +107,7 @@ export function TaskCreator({ onSubmit, loading }: TaskCreatorProps) {
         </div>
       </form>
 
+      {/* Suggested prompts list */}
       <div>
         <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
           Example Research Inquiries
@@ -114,3 +131,4 @@ export function TaskCreator({ onSubmit, loading }: TaskCreatorProps) {
     </div>
   );
 }
+

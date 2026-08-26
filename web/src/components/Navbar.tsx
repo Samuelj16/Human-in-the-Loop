@@ -1,24 +1,36 @@
 /**
- * Top bar: identity and session controls.
+ * Top navigation bar component: branding, new task trigger, and user session management.
  *
- * `user` is resolved by asking the API who we are, not by reading a token -
- * the session cookie is httpOnly, so client code cannot inspect it.
+ * Design Notes:
+ *   - The authenticated user's state is fetched from `/api/auth/me` by the parent component.
+ *   - Clicking the logo or "New Research" triggers `onNewTask`, switching the main viewport
+ *     to the research creation prompt.
+ *   - Unauthenticated state provides an entry point to open the `AuthModal`.
  */
 "use client";
 
 import React from "react";
 import { User } from "@/lib/api";
 
+/** Props for Navbar component */
 interface NavbarProps {
+  /** Authenticated user profile or null if unauthenticated */
   user: User | null;
+  /** Callback to launch the authentication modal */
   onOpenAuth: () => void;
+  /** Callback to clear user session and log out */
   onLogout: () => void;
+  /** Callback to initiate a fresh research inquiry */
   onNewTask: () => void;
 }
 
+/**
+ * Renders the global application navigation header.
+ */
 export function Navbar({ user, onOpenAuth, onLogout, onNewTask }: NavbarProps) {
   return (
     <header className="sticky top-0 z-30 border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur-md px-6 py-3.5 flex items-center justify-between">
+      {/* Brand logo & tagline */}
       <div className="flex items-center gap-4">
         <button
           onClick={onNewTask}
@@ -41,6 +53,7 @@ export function Navbar({ user, onOpenAuth, onLogout, onNewTask }: NavbarProps) {
         </button>
       </div>
 
+      {/* Action buttons & session status */}
       <div className="flex items-center gap-3">
         <button
           onClick={onNewTask}
@@ -77,3 +90,4 @@ export function Navbar({ user, onOpenAuth, onLogout, onNewTask }: NavbarProps) {
     </header>
   );
 }
+

@@ -1,4 +1,9 @@
-"""Web search behind an interface, same reasoning as the LLM layer."""
+"""Search client abstract interface and data structures.
+
+This module defines the search client contract consumed by the research agent loop:
+  - `SearchResult`: Data model containing url, title, snippet, and prompt formatting helpers.
+  - `SearchClient`: Abstract base class implemented by `TavilySearch` and `StubSearch`.
+"""
 from __future__ import annotations
 
 import abc
@@ -10,23 +15,34 @@ from app.config import settings
 
 @dataclass(frozen=True)
 class SearchResult:
-    """One search hit, trimmed to what the model actually needs."""
-    url: str
-    title: str
-    snippet: str
+    """One search hit."""
+    url: str                # Unique destination web URL
+    title: str              # Page title
+    snippet: str            # Extracted textual snippet or summary from the page
 
     def as_prompt_block(self) -> str:
-        """Render this hit for inclusion in a tool result."""
-        return f"- {self.title}\n  {self.url}\n  {self.snippet}"
+        """Render for injection into the research loop prompt."""
+        return (
+            f"TITLE: {self.title}\n"
+            f"URL: {self.url}\n"
+            f"EXTRACT: {self.snippet}\n"
+        )
 
 
 class SearchClient(abc.ABC):
-    """The search surface the agent depends on - one method, so it is easy to swap."""
-    name: str
+    """Abstract interface for web search engines."""
 
     @abc.abstractmethod
-    async def search(self, query: str, *, max_results: int = 5) -> list[SearchResult]:
-        """Return up to `max_results` hits for `query`."""
+    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        """Perform a web search query.
+        
+        Args:
+            query: Specific search terms or question.
+            max_results: Maximum number of results to return.
+            
+        Returns:
+            list[SearchResult]: Retrieved web search results.
+        """
         ...
 
 

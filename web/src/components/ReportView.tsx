@@ -1,13 +1,13 @@
 /**
- * The finished report, and the evidence behind it.
+ * Research Report Presentation Component: renders synthesized findings, evidence ledger, and citation audit.
  *
- * Order matters here: the citation audit renders *above* the prose, because a
- * reader needs to know which links were actually retrieved before they start
- * trusting sentences built on them.
- *
- * The metrics bar reports real spend in dollars alongside the pre-approval
- * estimate, which is how the estimator's heuristics get sanity-checked in
- * practice.
+ * Information Hierarchy:
+ *   1. Status Header & Share Bar: Public link toggle and copy button.
+ *   2. Metrics Telemetry Bar: Actual dollar cost vs pre-flight estimate, token count, searches, and provider.
+ *   3. Citation Audit Banner: Rendered prominently *above* the prose so readers can inspect hallucination
+ *      verification before trusting sentences in the report.
+ *   4. Markdown Body: Rendered with glowing inline citation badges (`[1]`, `[2]`).
+ *   5. Retrieved Evidence Ledger: Full list of retrieved pages with snippets and veto indicators.
  */
 "use client";
 
@@ -15,21 +15,32 @@ import React, { useState } from "react";
 import { formatUsd, TaskDetail } from "@/lib/api";
 import { CitationAudit } from "@/components/CitationAudit";
 
+/** Props for ReportView component */
 interface ReportViewProps {
+  /** Completed research task detail */
   task: TaskDetail;
+  /** Optional callback to toggle public sharing URL */
   onToggleShare?: () => Promise<void>;
+  /** Callback to initiate a new research inquiry */
   onNewTask: () => void;
 }
 
+/**
+ * Renders the full synthesized research report with source audit and telemetry metrics.
+ */
 export function ReportView({ task, onToggleShare, onNewTask }: ReportViewProps) {
   const [copied, setCopied] = useState(false);
   const [sharing, setSharing] = useState(false);
 
+  // Construct absolute public share URL
   const shareUrl =
     typeof window !== "undefined" && task.share_id
       ? `${window.location.origin}/share/${task.share_id}`
       : "";
 
+  /**
+   * Copy public share URL to clipboard.
+   */
   const handleCopyLink = () => {
     if (!shareUrl) return;
     navigator.clipboard.writeText(shareUrl);
@@ -37,6 +48,9 @@ export function ReportView({ task, onToggleShare, onNewTask }: ReportViewProps) 
     setTimeout(() => setCopied(false), 2500);
   };
 
+  /**
+   * Toggle public share status via parent callback.
+   */
   const handleShareClick = async () => {
     if (!onToggleShare) return;
     setSharing(true);
@@ -47,7 +61,9 @@ export function ReportView({ task, onToggleShare, onNewTask }: ReportViewProps) 
     }
   };
 
-  // Simple, clean client-side markdown renderer
+  /**
+   * Lightweight client-side Markdown parser for reports.
+   */
   const renderMarkdown = (content: string) => {
     if (!content) return null;
 
@@ -55,7 +71,7 @@ export function ReportView({ task, onToggleShare, onNewTask }: ReportViewProps) 
     const elements: React.ReactNode[] = [];
 
     lines.forEach((line, index) => {
-      // H1
+      // H1 Header
       if (line.startsWith("# ")) {
         elements.push(
           <h1 key={index} className="text-2xl sm:text-3xl font-bold text-zinc-100 mt-6 mb-3">
@@ -63,7 +79,7 @@ export function ReportView({ task, onToggleShare, onNewTask }: ReportViewProps) 
           </h1>
         );
       }
-      // H2
+      // H2 Section Header
       else if (line.startsWith("## ")) {
         elements.push(
           <h2 key={index} className="text-lg sm:text-xl font-semibold text-zinc-200 mt-6 mb-2 border-b border-zinc-800 pb-1.5">
@@ -71,7 +87,7 @@ export function ReportView({ task, onToggleShare, onNewTask }: ReportViewProps) 
           </h2>
         );
       }
-      // H3
+      // H3 Subsection Header
       else if (line.startsWith("### ")) {
         elements.push(
           <h3 key={index} className="text-base font-semibold text-zinc-300 mt-4 mb-1.5">
@@ -87,7 +103,7 @@ export function ReportView({ task, onToggleShare, onNewTask }: ReportViewProps) 
           </blockquote>
         );
       }
-      // List items
+      // Unordered list items
       else if (line.startsWith("- ") || line.startsWith("* ")) {
         const text = line.replace(/^[-*]\s+/, "");
         elements.push(
@@ -96,7 +112,7 @@ export function ReportView({ task, onToggleShare, onNewTask }: ReportViewProps) 
           </li>
         );
       }
-      // Numbered items
+      // Numbered list items
       else if (/^\d+\.\s+/.test(line)) {
         const text = line.replace(/^\d+\.\s+/, "");
         elements.push(
@@ -105,11 +121,11 @@ export function ReportView({ task, onToggleShare, onNewTask }: ReportViewProps) 
           </li>
         );
       }
-      // Empty line
+      // Empty spacer line
       else if (!line.trim()) {
         elements.push(<div key={index} className="h-2" />);
       }
-      // Paragraph
+      // Regular paragraph
       else {
         elements.push(
           <p key={index} className="text-zinc-300 my-2 text-xs sm:text-sm leading-relaxed">
@@ -122,8 +138,11 @@ export function ReportView({ task, onToggleShare, onNewTask }: ReportViewProps) 
     return elements;
   };
 
+  /**
+   * Format inline elements: bold, italic, inline code, and citation badges `[N]`.
+   */
   const renderFormattedInline = (text: string) => {
-    // Replace citation numbers like [1], [2] with glowing badge spans
+    // Replace citation numbers like [1], [2] with styled badge spans
     const parts = text.split(/(\[\d+\]|\*\*.*?\*\*|\*.*?\*|`.*?`)/g);
 
     return parts.map((part, i) => {
@@ -192,7 +211,7 @@ export function ReportView({ task, onToggleShare, onNewTask }: ReportViewProps) 
           </div>
         </div>
 
-        {/* Metrics Bar */}
+        {/* Metrics Telemetry Bar */}
         <div className="mt-3.5 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
           <div className="p-2.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80">
             <span className="text-[10px] uppercase font-bold text-zinc-500 block">Searches</span>
@@ -294,3 +313,4 @@ export function ReportView({ task, onToggleShare, onNewTask }: ReportViewProps) 
     </div>
   );
 }
+

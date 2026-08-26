@@ -1,13 +1,13 @@
 /**
- * The human-in-the-loop gate.
+ * Human-in-the-Loop Approval Gate Component.
  *
- * The agent has drafted a plan and stopped. Nothing further is spent until the
- * person here approves it - and because the plan is fully editable, approving
- * is not a rubber stamp: edited steps are passed to the researcher verbatim as
- * instructions, and the server records whether a human changed anything.
- *
- * The cost estimate below the plan is what turns this screen into a decision
- * rather than a confirmation dialog. It re-prices as steps are added or removed.
+ * Core Workflow:
+ *   - The agent has drafted a research plan during Phase 1 and paused execution in `awaiting_approval`.
+ *   - The user reviews, reorders, edits, adds, or deletes steps.
+ *   - User clarification answers are gathered for any optional questions formulated by the model.
+ *   - A dynamic `CostEstimate` preview re-prices the plan in real-time as steps change.
+ *   - Clicking "Approve Plan & Launch Research" sends the approved steps and answers to `/api/tasks/{task_id}/approve`.
+ *   - Backend arbitrates concurrency atomically using conditional SQL updates, preventing duplicate runs.
  */
 "use client";
 
@@ -15,13 +15,21 @@ import React, { useState } from "react";
 import { formatUsd, TaskDetail } from "@/lib/api";
 import { CostEstimate } from "@/components/CostEstimate";
 
+/** Props for PlanApprovalGate component */
 interface PlanApprovalGateProps {
+  /** Detailed task object currently awaiting approval */
   task: TaskDetail;
+  /** Async callback to approve edited plan and clarification answers */
   onApprove: (plan: string[], answers: Record<string, string>) => Promise<void>;
+  /** Async callback to cancel the task */
   onCancel: () => Promise<void>;
+  /** Whether an approval or cancellation request is in flight */
   loading: boolean;
 }
 
+/**
+ * Renders the human approval gate interface with step editor and pricing preview.
+ */
 export function PlanApprovalGate({
   task,
   onApprove,
@@ -276,3 +284,4 @@ export function PlanApprovalGate({
     </div>
   );
 }
+

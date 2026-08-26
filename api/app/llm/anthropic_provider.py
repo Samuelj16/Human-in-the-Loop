@@ -61,9 +61,13 @@ class AnthropicProvider(LLMProvider):
         # An empty string must become None, or it overrides the SDK's own
         # credential resolution (env var, `ant auth login` profile) and the
         # client raises a bare TypeError at request time instead.
-        self._client = anthropic.AsyncAnthropic(
-            api_key=(api_key or settings.anthropic_api_key) or None
-        )
+        raw_key = (api_key or settings.anthropic_api_key) or None
+        if raw_key and (raw_key.startswith("AQ.") or raw_key.startswith("ey")):
+            self._client = anthropic.AsyncAnthropic(auth_token=raw_key)
+        elif raw_key:
+            self._client = anthropic.AsyncAnthropic(api_key=raw_key)
+        else:
+            self._client = anthropic.AsyncAnthropic()
         self._use_fallbacks = settings.anthropic_enable_fallbacks
 
     # -- wire format -------------------------------------------------------

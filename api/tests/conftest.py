@@ -21,6 +21,14 @@ os.environ["TAVILY_API_KEY"] = ""
 # The whole suite shares one client IP; the limiter is unit-tested directly
 # in tests/test_ratelimit.py instead.
 os.environ["RATE_LIMIT_ENABLED"] = "false"
+# Pin the spend caps so the suite does not depend on whatever a developer has in
+# .env. Without this, lowering MAX_SEARCHES_PER_TASK locally silently changes
+# what the cost-estimate tests assert.
+os.environ["MAX_TOOL_ITERATIONS"] = "12"
+os.environ["MAX_SEARCHES_PER_TASK"] = "8"
+os.environ["MAX_OUTPUT_TOKENS_PER_TASK"] = "60000"
+os.environ["MAX_TASKS_PER_USER_PER_DAY"] = "25"
+os.environ["LLM_PROVIDER"] = "anthropic"
 
 import pytest
 import pytest_asyncio

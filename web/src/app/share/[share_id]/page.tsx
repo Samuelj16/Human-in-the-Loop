@@ -1,9 +1,11 @@
 /**
- * Public read-only view of a shared report.
+ * Public Report Share Page (`/share/[share_id]`).
  *
- * Reached by share id with no account and no session. It fetches through this
- * app's unauthenticated /api/share route rather than the proxy, since a
- * recipient has no token to forward.
+ * Architecture & Access Control:
+ *   - Accessible publicly without requiring login or session cookies.
+ *   - Fetches data through Next.js server route `/api/share/[shareId]`, calling FastAPI `/api/public/reports/{share_id}`.
+ *   - Non-existent or unshared reports return 404 to avoid leaking valid share IDs.
+ *   - Renders formatted Markdown content, publication date, and non-excluded source references.
  */
 "use client";
 
@@ -12,6 +14,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api, errorMessage, PublicReport } from "@/lib/api";
 
+/**
+ * Public report viewing page component.
+ */
 export default function PublicReportPage() {
   const params = useParams();
   const shareId = params.share_id as string;
@@ -43,6 +48,9 @@ export default function PublicReportPage() {
     };
   }, [shareId]);
 
+  /**
+   * Parse Markdown report body into formatted React elements.
+   */
   const renderMarkdown = (content: string) => {
     if (!content) return null;
 
@@ -102,6 +110,7 @@ export default function PublicReportPage() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
+      {/* Public view header */}
       <header className="border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur-md px-6 py-3.5 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-3 group cursor-pointer">
           <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-lg text-xs">
@@ -111,13 +120,15 @@ export default function PublicReportPage() {
             Human in the Loop
           </span>
         </Link>
-        <Link href="/"
+        <Link
+          href="/"
           className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors cursor-pointer"
         >
           Conduct Your Own Research
         </Link>
       </header>
 
+      {/* Main content viewport */}
       <main className="flex-1 max-w-4xl w-full mx-auto py-10 px-4">
         {loading ? (
           <div className="p-12 text-center text-zinc-500 text-sm">
@@ -136,7 +147,8 @@ export default function PublicReportPage() {
             <p className="text-xs text-zinc-400 mb-4">
               {error || "This report does not exist or has been made private by its author."}
             </p>
-            <Link href="/"
+            <Link
+              href="/"
               className="inline-block px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl transition-colors"
             >
               Go to Home
@@ -200,3 +212,4 @@ export default function PublicReportPage() {
     </div>
   );
 }
+

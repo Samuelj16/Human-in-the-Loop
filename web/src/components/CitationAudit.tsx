@@ -1,17 +1,28 @@
-/** Displays citation coverage and source-quality checks for a completed report. */
+/**
+ * Citation Audit Component: detects model hallucinations vs verified web sources.
+ *
+ * Trust & Verification Architecture:
+ *   - The backend records every search result URL fetched in the `sources` table.
+ *   - During Phase 2 completion, `audit_citations()` extracts all markdown links and compares them
+ *     against genuinely retrieved, non-excluded URLs.
+ *   - If any cited link does not exist in the source ledger (an ungrounded hallucination),
+ *     it is flagged with a high-visibility warning banner and listed explicitly.
+ *   - Clean reports display an emerald verification seal.
+ */
 "use client";
 
 import { CitationReport } from "@/lib/api";
 
+/** Props for CitationAudit component */
+interface CitationAuditProps {
+  /** Verification report object computed by the server */
+  report: CitationReport;
+}
+
 /**
- * Shows how the report's citations fared against the retrieval ledger.
- *
- * Every URL a search actually returned is recorded server-side. Anything the
- * report cites that is missing from that ledger was produced from the model's
- * memory rather than from evidence it read - so it gets called out here instead
- * of sitting in the text looking exactly as authoritative as a real source.
+ * Renders citation verification status, hallucination warnings, and coverage counts.
  */
-export function CitationAudit({ report }: { report: CitationReport }) {
+export function CitationAudit({ report }: CitationAuditProps) {
   const { cited_count, verified_count, unverified, unused_count, is_clean } = report;
 
   if (cited_count === 0) {
@@ -100,3 +111,4 @@ export function CitationAudit({ report }: { report: CitationReport }) {
     </div>
   );
 }
+

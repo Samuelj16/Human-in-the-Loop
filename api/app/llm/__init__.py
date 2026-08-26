@@ -1,11 +1,19 @@
-"""Provider-neutral LLM interfaces and configured provider selection."""
+"""Public LLM interface and provider registry.
+
+Exports the core types and factory used by the agent execution loop:
+  - `LLMProvider`: Abstract base class for model adapters.
+  - `LLMResponse`: Result object carrying text, tool calls, and telemetry.
+  - `LLMError`, `LLMRefusal`, `LLMTransientError`: Error taxonomy.
+  - `Message`, `ToolCall`, `ToolSpec`, `Usage`: Conversation building blocks.
+  - `get_llm_provider`: Provider factory resolving settings.llm_provider.
+"""
 
 from app.llm.base import (
     LLMError,
     LLMProvider,
     LLMRefusal,
-    LLMTransientError,
     LLMResponse,
+    LLMTransientError,
     Message,
     ToolCall,
     ToolSpec,
@@ -20,8 +28,8 @@ __all__ = [
     "LLMError",
     "LLMProvider",
     "LLMRefusal",
-    "LLMTransientError",
     "LLMResponse",
+    "LLMTransientError",
     "Message",
     "ToolCall",
     "ToolSpec",

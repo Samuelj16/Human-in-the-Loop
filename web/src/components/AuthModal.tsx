@@ -1,22 +1,30 @@
 /**
- * Login and registration.
+ * Authentication Modal Dialog: handles user sign-in and account registration.
  *
- * Credentials go to this app's own route handlers, not to the API directly.
- * Those handlers exchange them for a token and store it in an httpOnly cookie,
- * so the token never touches client JavaScript and an XSS bug cannot steal a
- * session. See src/lib/session.ts.
+ * Security Architecture:
+ *   - Form submission sends credentials to local Next.js route handlers (`/api/auth/login` or `/api/auth/register`).
+ *   - Tokens are set as `httpOnly` cookies on the server response, so JavaScript never
+ *     handles raw credentials or bearer tokens.
+ *   - On successful authentication, resolves user profile via `api.auth.me()` and notifies parent.
  */
 "use client";
 
 import React, { useState } from "react";
 import { api, User, errorMessage } from "@/lib/api";
 
+/** Props for AuthModal component */
 interface AuthModalProps {
+  /** Whether the modal is actively visible */
   isOpen: boolean;
+  /** Callback to close the modal dialog */
   onClose: () => void;
+  /** Callback triggered when authentication succeeds with resolved User */
   onSuccess: (user: User) => void;
 }
 
+/**
+ * Modal dialog for logging in or creating a new account.
+ */
 export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState("");
@@ -26,6 +34,9 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
 
   if (!isOpen) return null;
 
+  /**
+   * Submit registration or login payload.
+   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -53,6 +64,7 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
         className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl relative"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Dismiss modal button */}
         <button
           onClick={onClose}
           className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
@@ -60,6 +72,7 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
           ✕
         </button>
 
+        {/* Modal branding header */}
         <div className="mb-6 text-center">
           <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-400 font-bold mb-3 border border-indigo-500/20">
             H
@@ -74,12 +87,14 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
           </p>
         </div>
 
+        {/* Error message alert */}
         {error && (
           <div className="mb-4 p-3 rounded-lg bg-red-950/50 border border-red-800/60 text-red-300 text-xs">
             {error}
           </div>
         )}
 
+        {/* Credential form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-medium text-zinc-300 mb-1">
@@ -119,6 +134,7 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
           </button>
         </form>
 
+        {/* Mode switcher (Login vs Register) */}
         <div className="mt-5 text-center text-xs text-zinc-400">
           {isRegister ? "Already have an account?" : "Don't have an account yet?"}{" "}
           <button
@@ -135,3 +151,4 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
     </div>
   );
 }
+

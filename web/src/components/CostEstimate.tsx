@@ -1,22 +1,28 @@
-/** Presents projected provider usage before the user approves paid research. */
+/**
+ * Cost Estimate Component: pre-flight dollar pricing preview on the human approval gate.
+ *
+ * Design & Economics:
+ *   - An approval screen that only asks "does this look right?" is a rubber stamp.
+ *   - Showing calculated dollar costs turns human approval into an active business decision.
+ *   - The estimate dynamically recomputes as steps are added, edited, or removed.
+ *   - Displays expected, low, and high cost ranges, projected searches, turn counts, and model ID.
+ */
 "use client";
 
 import { useEffect, useState } from "react";
 
 import { api, CostEstimate as Estimate, formatUsd } from "@/lib/api";
 
+/** Props for CostEstimate component */
 interface CostEstimateProps {
+  /** Research task ID */
   taskId: string;
-  /** The plan as currently edited, so the price tracks the user's changes. */
+  /** The plan steps list as currently edited by the user in the UI */
   plan: string[];
 }
 
 /**
- * The price tag on the approval gate.
- *
- * An approval screen that only asks "does this look right?" is a rubber stamp.
- * Showing what the plan will cost turns it into an actual decision, which is
- * the entire point of keeping a human in this loop.
+ * Renders the dollar cost estimate card with search counts and price ranges.
  */
 export function CostEstimate({ taskId, plan }: CostEstimateProps) {
   const [estimate, setEstimate] = useState<Estimate | null>(null);
@@ -115,3 +121,4 @@ export function CostEstimate({ taskId, plan }: CostEstimateProps) {
     </div>
   );
 }
+
